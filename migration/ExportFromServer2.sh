@@ -35,17 +35,23 @@ STAMP="$(date +%Y%m%d)"
 
 : "${DATABASE_URL:?Set DATABASE_URL to the server 2 database}"
 
-# psql only treats its argument as a URI if it parses as one. Anything else
-# is taken as a bare database name and connected over the local socket as
-# the current OS user, which fails later and confusingly. Catch it here.
-case "$DATABASE_URL" in
+# DATABASE_URL here carries SQLAlchemy's driver suffix — postgresql+asyncpg://
+# — because that is what the backend needs. psql and pg_dump do not
+# recognize it, and rather than erroring they treat the whole string as a
+# bare database name and connect over the local socket as the current OS
+# user. That surfaces much later as "role does not exist" from a connection
+# nobody intended. Strip the suffix, exactly as parse_database_url() does
+# on the Python side.
+PSQL_URL="$(printf '%s' "$DATABASE_URL" | sed -E 's#^postgres(ql)?\+[a-z0-9]+://#postgresql://#')"
+
+case "$PSQL_URL" in
     postgresql://*|postgres://*) ;;
     *)
         echo "ERROR: DATABASE_URL is not a postgresql:// URI." >&2
         echo "       psql would read it as a database name and connect to the" >&2
         echo "       local socket as '$(id -un)' instead." >&2
         echo "       Expected: postgresql://user:password@host:5432/dbname" >&2
-        echo "       Got:      $(printf '%s' "$DATABASE_URL" | sed -E 's#(://[^:]+:)[^@]*@#\1***@#')" >&2
+        echo "       Got:      $(printf '%s' "$PSQL_URL" | sed -E 's#(://[^:]+:)[^@]*@#\1***@#')" >&2
         exit 1
         ;;
 esac
@@ -61,7 +67,7 @@ echo
 # 1. Content library assets — CSV, the copy that gets loaded
 # ---------------------------------------------------------------------------
 echo "[1/4] content_library_assets -> CSV"
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "\copy ( \
+psql "$PSQL_URL" -v ON_ERROR_STOP=1 -c "\copy ( \
   SELECT id, asset_id, s3_key, filename, folder, place_name, cityid, \
          country, type, subtype, category, subcategory, \
          hook_compatibility, notes, duration, size_bytes, content_type, \
@@ -73,7 +79,7 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "\copy ( \
 # 2. Content library assets — independent second copy
 # ---------------------------------------------------------------------------
 echo "[2/4] content_library_assets -> SQL dump"
-pg_dump "$DATABASE_URL" \
+pg_dump "$PSQL_URL" \
     --table=public.content_library_assets \
     --data-only --column-inserts \
     -f "content_library_assets_${STAMP}.sql"
@@ -88,7 +94,7 @@ pg_dump "$DATABASE_URL" \
 # Resolution joins a slug derived here against one derived from an S3 path,
 # and a divergence would silently fail to match rather than raising.
 echo "[3/4] cities -> CSV"
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "\copy ( \
+psql "$PSQL_URL" -v ON_ERROR_STOP=1 -c "\copy ( \
   SELECT cityid, cityname, country, \
          btrim(regexp_replace(lower(btrim(cityname)), '[^a-z0-9]+', '-', 'g'), '-') AS city_slug \
   FROM public.cities WHERE cityid IS NOT NULL ORDER BY cityid \
@@ -98,7 +104,7 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "\copy ( \
 # 4. Verification facts — compared against server 3 after loading
 # ---------------------------------------------------------------------------
 echo "[4/4] verification facts"
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -A -F'|' -c "
+psql "$PSQL_URL" -v ON_ERROR_STOP=1 -A -F'|' -c "
 SELECT
     count(*)                        AS rows,
     count(asset_id)                 AS with_asset_id,
