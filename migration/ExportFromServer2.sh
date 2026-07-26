@@ -35,6 +35,21 @@ STAMP="$(date +%Y%m%d)"
 
 : "${DATABASE_URL:?Set DATABASE_URL to the server 2 database}"
 
+# psql only treats its argument as a URI if it parses as one. Anything else
+# is taken as a bare database name and connected over the local socket as
+# the current OS user, which fails later and confusingly. Catch it here.
+case "$DATABASE_URL" in
+    postgresql://*|postgres://*) ;;
+    *)
+        echo "ERROR: DATABASE_URL is not a postgresql:// URI." >&2
+        echo "       psql would read it as a database name and connect to the" >&2
+        echo "       local socket as '$(id -un)' instead." >&2
+        echo "       Expected: postgresql://user:password@host:5432/dbname" >&2
+        echo "       Got:      $(printf '%s' "$DATABASE_URL" | sed -E 's#(://[^:]+:)[^@]*@#\1***@#')" >&2
+        exit 1
+        ;;
+esac
+
 mkdir -p "$OUTDIR"
 cd "$OUTDIR"
 
