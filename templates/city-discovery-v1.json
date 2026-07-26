@@ -1,0 +1,48 @@
+{
+  "template_id": "city-discovery-v1",
+  "version": 1,
+  "description": "Reaction-free starter. Hook, proof, app demo, support, CTA.",
+  "canvas": {"width": 1080, "height": 1920, "fps": 30},
+  "slots": [
+    {
+      "role": "hook_visual",
+      "asset_types": ["broll"],
+      "min_ms": 2000, "preferred_ms": 2500, "max_ms": 3000,
+      "required": true,
+      "prefer_topic_match": true,
+      "notes": "Opens the video. Should be the most arresting shot available."
+    },
+    {
+      "role": "destination_proof",
+      "asset_types": ["broll"],
+      "min_ms": 4000, "preferred_ms": 5000, "max_ms": 6000,
+      "required": true,
+      "prefer_topic_match": true,
+      "notes": "Establishes the place is real and worth visiting."
+    },
+    {
+      "role": "app_demonstration",
+      "asset_types": ["app"],
+      "min_ms": 5000, "preferred_ms": 6500, "max_ms": 8000,
+      "required": true,
+      "prefer_topic_match": false,
+      "notes": "The product moment. App recordings only."
+    },
+    {
+      "role": "supporting_visual",
+      "asset_types": ["broll"],
+      "min_ms": 3000, "preferred_ms": 4000, "max_ms": 5000,
+      "required": true,
+      "prefer_topic_match": true,
+      "notes": "Second angle on the topic. Must differ in place or shot type from the hook."
+    },
+    {
+      "role": "cta",
+      "asset_types": ["app", "broll"],
+      "min_ms": 2000, "preferred_ms": 2500, "max_ms": 3000,
+      "required": true,
+      "prefer_topic_match": false,
+      "notes": "Background for generated call-to-action text."
+    }
+  ]
+}

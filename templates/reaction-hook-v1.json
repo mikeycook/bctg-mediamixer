@@ -1,0 +1,38 @@
+{
+  "template_id": "reaction-hook-v1",
+  "version": 1,
+  "description": "Opens on a reaction performance instead of B-roll.",
+  "canvas": {"width": 1080, "height": 1920, "fps": 30},
+  "slots": [
+    {
+      "role": "reaction_hook",
+      "asset_types": ["reaction"],
+      "min_ms": 3000, "preferred_ms": 4000, "max_ms": 5000,
+      "required": true,
+      "prefer_topic_match": false,
+      "city_agnostic_ok": true,
+      "notes": "Reactions carry no city, so this slot ignores the brief's city."
+    },
+    {
+      "role": "destination_proof",
+      "asset_types": ["broll"],
+      "min_ms": 4000, "preferred_ms": 5000, "max_ms": 6000,
+      "required": true,
+      "prefer_topic_match": true
+    },
+    {
+      "role": "app_demonstration",
+      "asset_types": ["app"],
+      "min_ms": 5000, "preferred_ms": 6500, "max_ms": 8000,
+      "required": true,
+      "prefer_topic_match": false
+    },
+    {
+      "role": "cta",
+      "asset_types": ["app", "broll"],
+      "min_ms": 2000, "preferred_ms": 2500, "max_ms": 3000,
+      "required": true,
+      "prefer_topic_match": false
+    }
+  ]
+}
