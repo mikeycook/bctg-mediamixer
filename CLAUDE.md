@@ -80,14 +80,38 @@ carrying `duplicate_of_asset_id`. No folder markers registered, nothing from
 `ugc-assets/exported/` ingested, and a second run changing no row count and no
 `first_seen_at`.
 
-## Status
+## Status — Phases 1 and 2 complete
 
-Infrastructure is provisioned and verified. Server 3's IAM boundary is proven
-in both directions: reads succeed, writes to `ugc-assets/b-roll/` are denied
-with an explicit deny.
+**Infrastructure.** Server 3 is `c7i.large`, Ubuntu 24.04 x86_64, `us-east-1c`,
+in the existing VPC. Its IAM boundary is proven in both directions: reads
+succeed, and a write to `ugc-assets/b-roll/` is refused with an explicit deny.
+The database is RDS `mediamixerdb`, PostgreSQL 16, `db.t4g.micro`, 20 GB gp3,
+Single-AZ, private, reachable only from server 3's security group. Schema
+files `001`, `002` and `003` are applied. Config lives in
+`/etc/mediamixer/mediamixer.env`; the venv is at `/opt/mediamixer/venv` and
+the checkout at `/opt/mediamixer/app`.
 
-Built so far: repository skeleton, `sql/001_content_library_schema.sql`.
+**Migration.** Server 2 was read once and never written to. 73 tagged assets
+and 892 cities were copied across, verified field by field: 42 `place_name`,
+34 `hook_compatibility`, 42 `notes`, 73 `asset_id`, ids preserved, sequence
+reset. Its original table remains in place as frozen history.
 
-Next: `S3Interpreter.py`, `ContentLibraryPaths.py`, `ContentLibraryProbe.py`,
-`ContentLibrarySync.py`, the test suite, then the server 2 export and seed
-(§4 of the implementation plan).
+**Inventory.** A full live run registered all 73 objects — 6 app, 36 b-roll,
+31 reaction — with no duplicates against the seeded rows. All 73 are probed
+and checksummed. 14 byte-identical aliases are marked, leaving 59 unique
+payloads, and 31 folder-derived emotion tags are merged onto canonical rows.
+Every row sits at `status='needs_review'`; nothing is `active`.
+
+Code is on GitHub at `mikeycook/bctg-mediamixer`; server 3 pulls via a
+read-only deploy key. 107 tests pass with no database, AWS, or ffprobe.
+
+## Next
+
+1. **Admin UI cutover (urgent — see §8 of the implementation plan).** The
+   Content Library tab still reads and writes server 2's now-frozen copy.
+   Any tagging done there diverges silently from server 3. Server 2's backend
+   should proxy these endpoints to a small API on server 3.
+2. `deploy/` systemd units — `mediamixer-api.service`, `mediamixer-sync`
+   service and timer. Not yet written.
+3. Phase 3: review workflow and rights fields, so assets can reach `active`.
+   Nothing is eligible for selection until they do.
