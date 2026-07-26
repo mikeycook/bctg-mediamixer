@@ -493,13 +493,20 @@ def main():
             raise SystemExit("Could not connect to the database.")
         open_run(db, run_id, bucket, prefix, args.dry_run)
 
-        for obj in objects:
+        # Per-object progress. A probe plus a full-object checksum takes
+        # seconds each, so a silent loop over 73 objects is indistinguishable
+        # from a hang.
+        total = len(objects)
+        for index, obj in enumerate(objects, start=1):
             classified = obj["_classified"]
+            short_key = obj["key"][len(prefix):] if obj["key"].startswith(prefix) \
+                else obj["key"]
             asset = upsert_asset(db, obj, classified, started_at)
             if asset is None:
-                print(f"[ERROR] upsert failed: {obj['key']}")
+                print(f"[{index:>3}/{total}] {short_key}  UPSERT FAILED")
                 continue
             counters["discovered" if asset["inserted"] else "unchanged"] += 1
+            actions = ["new" if asset["inserted"] else "seen"]
 
             needs_probe = args.reprobe or asset["duration_ms"] is None
             if needs_probe and not args.no_probe:
@@ -507,11 +514,20 @@ def main():
                 counters["probed"] += 1
                 if result["error"]:
                     counters["probe_failures"] += 1
-                    print(f"[WARN] probe failed ({result['error']}): {obj['key']}")
+                    actions.append(f"PROBE FAILED ({result['error']})")
+                else:
+                    actions.append(
+                        f"{(result['duration_ms'] or 0) / 1000:.1f}s "
+                        f"{result['width']}x{result['height']} "
+                        f"{result['orientation']}")
 
             if asset["checksum"] is None and not args.no_checksum:
                 checksum_asset(db, s3, asset["id"], obj["key"])
                 counters["checksummed"] += 1
+                actions.append(f"sha {(obj['size'] or 0) / 1048576:.0f}MiB")
+
+            print(f"[{index:>3}/{total}] {short_key}  {'  '.join(actions)}",
+                  flush=True)
 
         db.execute_query(
             "UPDATE public.content_library_assets "
