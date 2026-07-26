@@ -1,0 +1,35 @@
+[Unit]
+Description=MediaMixer content library API
+Documentation=https://github.com/mikeycook/bctg-mediamixer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/mediamixer/app
+
+# Read as root before privileges are dropped, so the file stays 600 root:root.
+EnvironmentFile=/etc/mediamixer/mediamixer.env
+
+# Bound to the private interface. Only server 2 can reach it, by security
+# group, and it additionally requires X-Admin-Secret. Never bind 0.0.0.0.
+ExecStart=/opt/mediamixer/venv/bin/uvicorn api.main:app \
+    --host 172.30.2.215 \
+    --port 8000 \
+    --workers 2 \
+    --proxy-headers
+
+Restart=on-failure
+RestartSec=5s
+
+# The API only reads the database and presigns URLs; it needs no disk.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/mediamixer
+
+[Install]
+WantedBy=multi-user.target

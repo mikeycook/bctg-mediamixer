@@ -1,0 +1,31 @@
+[Unit]
+Description=MediaMixer S3 inventory sync
+Documentation=https://github.com/mikeycook/bctg-mediamixer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/mediamixer/app
+EnvironmentFile=/etc/mediamixer/mediamixer.env
+
+ExecStart=/opt/mediamixer/venv/bin/python ContentLibrarySync.py
+
+# A full pass probes every unmeasured object and streams it for SHA-256.
+# Generous, because being killed midway leaves work half done — though the
+# run is idempotent, so a retry picks up where it stopped.
+TimeoutStartSec=3600
+
+# Inventory writes nothing to disk: probing goes over a presigned URL and
+# checksums stream in chunks. If that ever changes, this will fail loudly
+# rather than silently filling a volume.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/mediamixer
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=Run the MediaMixer inventory sync nightly
+Documentation=https://github.com/mikeycook/bctg-mediamixer
+
+[Timer]
+# Overnight, after any daytime uploads have settled.
+OnCalendar=*-*-* 04:15:00
+# Uploads are irregular, so a missed run should catch up rather than wait
+# a day. Objects absent from S3 are only ever marked missing after a
+# listing that completed, so a late run cannot damage the catalog.
+Persistent=true
+RandomizedDelaySec=300
+Unit=mediamixer-sync.service
+
+[Install]
+WantedBy=timers.target
