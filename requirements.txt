@@ -1,5 +1,6 @@
-boto3==1.35.49
-psycopg2-binary==2.9.10
+# Pinned to versions the test suite actually runs against.
+boto3==1.43.56
+psycopg2-binary==2.9.12
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
 pydantic==2.9.2
