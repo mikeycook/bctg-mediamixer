@@ -133,6 +133,56 @@ mediamixer database on server 3, through server 2's proxy. Server 2's own
 `content_library_assets` is dormant — left in place as history, read by
 nothing. `admin_ui` was never modified.
 
+## Resume here — 2026-07-26
+
+Work stopped at the Phase 5 prerequisites. Selection, rendering, export and
+validation are all built and tested (225 tests); what remains is
+infrastructure, the review pass, and the worker that ties the render
+pieces together.
+
+**Step 1 — install the AWS CLI on the workstation.** Everything below
+starts here, because server 3's instance role deliberately cannot inspect
+or change AWS configuration; those commands must run from the laptop.
+
+```bash
+curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o AWSCLIV2.pkg
+sudo installer -pkg AWSCLIV2.pkg -target /
+aws --version
+aws configure          # correct HERE — and never on server 3, which uses its role
+```
+
+Note the asymmetry: `aws configure` writes static credentials, which is
+right on a laptop with no instance role and wrong on server 3, where it
+would defeat the role entirely.
+
+**Step 2 — bucket versioning** (workstation). See §8 of
+`docs/ai-media-generation/10-ec2-server3-setup.md`. Check, enable if off,
+add a lifecycle rule expiring noncurrent versions after ~90 days. Not
+retroactive, so sooner is better.
+
+**Step 3 — scratch volume** (§6 of the same doc). `create-volume` and
+`attach-volume` from the workstation; `mkfs`, `mount` and the fstab entry
+on server 3. 20 GB gp3 in `us-east-1c`. Mount by label, not device name.
+
+**Step 4 — the review pass.** Nothing renders until assets are `active`.
+Filter the tab to "Canonical only", confirm tagging, activate in batches.
+Check progress with the eligibility query in §Next below. `city-discovery-v1`
+needs at least one `app` and three `broll` clips for one city.
+
+**Step 5 — the render worker.** The only unwritten piece: claim a queued
+render, download and verify sources against their recorded checksums, run
+the commands `VideoRenderer` builds, validate the output, upload through
+`S3Exporter`, and write the lineage rows in one transaction. Its systemd
+unit needs `ReadWritePaths=/opt/mediamixer/scratch` — see §6.
+
+**Step 6 — the first three test videos.** All New York (pizza, bagels,
+landmarks), `environment=dev`, plus a Tokyo brief run alongside as a
+deliberate failure case: it must return `insufficient_assets` rather than
+borrowing New York footage. See §10 of the implementation plan.
+
+Also outstanding, not blocking: `mediamixer` has 1 unpushed commit; the
+`bigcity` password for the golden source is still to be rotated.
+
 ## Next
 
 1. **Enable `mediamixer-sync.timer`** if not yet done. Run it once by hand
