@@ -128,17 +128,22 @@ by hand works, because an interactive shell has a real `$HOME`.
 `self.connection` as None, so anything that does not check it will appear
 to succeed over a dead connection. `/health` checks explicitly.
 
+**Cutover is complete.** The Content Library tab now reads and writes the
+mediamixer database on server 3, through server 2's proxy. Server 2's own
+`content_library_assets` is dormant — left in place as history, read by
+nothing. `admin_ui` was never modified.
+
 ## Next
 
-1. **Cutover deployment.** Open port 8000 on server 3's security group from
-   server 2's group id; deploy `8b06b90` to server 2; verify the tab.
-   Before that, confirm nothing was tagged on server 2 after the export —
-   `SELECT max(updated_at) FROM content_library_assets` — or those edits are
-   stranded on the frozen copy.
-2. **Enable `mediamixer-sync.timer`.** Run it once by hand first; it had the
-   same `HOME` bug and would otherwise fail at 04:15.
-3. **Phase 3: review workflow and rights.** All 73 assets sit at
+1. **Enable `mediamixer-sync.timer`** if not yet done. Run it once by hand
+   first; it carried the same `HOME` bug and would otherwise fail at 04:15.
+2. **Phase 3: review workflow and rights.** All 73 assets sit at
    `needs_review` with `rights_status='unknown'`, so nothing is eligible for
-   selection. `status` and `rights_status` are already writable through the
-   existing tab, but it has no controls for them yet. The 14 alias rows
-   should be visible to reviewers, or the same footage gets tagged twice.
+   selection — the fail-closed rule working, but it makes review the gate to
+   everything downstream. `status`, `rights_status`, `rights_source` and
+   `city_agnostic` are already writable through the API; the tab has no
+   controls for them. The 14 alias rows should be visible to reviewers, or
+   the same footage gets tagged twice.
+3. **Phase 4 onward** — selection, recipes, rendering — is unchanged from
+   `docs/ai-media-generation/08-vscode-implementation-plan.md`. Nothing there
+   should begin until assets can reach `active`.
