@@ -105,13 +105,40 @@ Every row sits at `status='needs_review'`; nothing is `active`.
 Code is on GitHub at `mikeycook/bctg-mediamixer`; server 3 pulls via a
 read-only deploy key. 107 tests pass with no database, AWS, or ffprobe.
 
+**API.** `api/main.py` runs on server 3 under `mediamixer-api.service`,
+reproducing the admin backend's endpoint contracts field for field so
+`ContentLibrary.tsx` needs no change. Contract tests fail if paths, hook
+parsing, or the editable-column set drift. Requires
+`MEDIAMIXER_ADMIN_SECRET`, deliberately distinct from server 2's
+`ADMIN_SECRET`. The sync endpoint registers only — probing and checksums
+belong to the scheduled job, since a full pass is minutes of work.
+
+Server 2's proxy is committed on `bctg-backend` as `8b06b90`.
+
+### Two traps already hit, worth not re-setting
+
+`ProtectHome=true` masks `/home`, and libpq probes
+`$HOME/.postgresql/postgresql.crt` on every TLS connection. Under the mask
+that returns EACCES rather than ENOENT, libpq silently downgrades to
+plaintext, and RDS refuses it with a misleading `no pg_hba.conf entry`.
+Both units set `Environment=HOME=/opt/mediamixer`. Running either program
+by hand works, because an interactive shell has a real `$HOME`.
+
+`PostgresInterpreter.connect()` swallows connection errors and leaves
+`self.connection` as None, so anything that does not check it will appear
+to succeed over a dead connection. `/health` checks explicitly.
+
 ## Next
 
-1. **Admin UI cutover (urgent — see §8 of the implementation plan).** The
-   Content Library tab still reads and writes server 2's now-frozen copy.
-   Any tagging done there diverges silently from server 3. Server 2's backend
-   should proxy these endpoints to a small API on server 3.
-2. `deploy/` systemd units — `mediamixer-api.service`, `mediamixer-sync`
-   service and timer. Not yet written.
-3. Phase 3: review workflow and rights fields, so assets can reach `active`.
-   Nothing is eligible for selection until they do.
+1. **Cutover deployment.** Open port 8000 on server 3's security group from
+   server 2's group id; deploy `8b06b90` to server 2; verify the tab.
+   Before that, confirm nothing was tagged on server 2 after the export —
+   `SELECT max(updated_at) FROM content_library_assets` — or those edits are
+   stranded on the frozen copy.
+2. **Enable `mediamixer-sync.timer`.** Run it once by hand first; it had the
+   same `HOME` bug and would otherwise fail at 04:15.
+3. **Phase 3: review workflow and rights.** All 73 assets sit at
+   `needs_review` with `rights_status='unknown'`, so nothing is eligible for
+   selection. `status` and `rights_status` are already writable through the
+   existing tab, but it has no controls for them yet. The 14 alias rows
+   should be visible to reviewers, or the same footage gets tagged twice.
