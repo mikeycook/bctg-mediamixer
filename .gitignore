@@ -10,6 +10,15 @@
 credentials
 .aws/
 
+# Data extracted from the golden source. ExportFromServer2.sh writes here
+# by default when run from the repo, and the output is business data, not
+# code — it belongs on a disk, not in version control.
+migration/*.csv
+migration/*.sql
+migration/*.dump
+migration/verification_*.txt
+mediamixer-export-*/
+
 # Virtualenvs — never commit, not even partially
 venv/
 .venv/
@@ -17,7 +26,6 @@ env/
 ENV/
 
 # Python
-__pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
@@ -27,7 +35,11 @@ htmlcov/
 .ruff_cache/
 
 # Media — source clips live in S3, renders live under ugc-assets/exported/.
-# Nothing binary belongs in this repository.
+# Nothing binary belongs in this repository. Test fixtures are generated in
+# code, so there is deliberately no exception carved out here: an earlier
+# "!tests/fixtures/**" negation re-included everything under that path,
+# including __pycache__, which is exactly the trap this comment exists to
+# prevent someone re-setting.
 *.mov
 *.mp4
 *.m4v
@@ -41,14 +53,11 @@ htmlcov/
 *.heic
 *.webp
 *.srt
-!tests/fixtures/**
 
 # Local scratch
 scratch/
 tmp/
 *.log
-*.dump
-*.sql.gz
 
 # Archives
 *.zip
@@ -61,3 +70,6 @@ tmp/
 .idea/
 .vscode/
 *~
+
+# Last, so no earlier negation can re-include compiled bytecode.
+__pycache__/
