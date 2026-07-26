@@ -16,7 +16,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 os.environ.setdefault("DATABASE_URL", "postgresql://u:p@localhost:5432/test")
-os.environ.setdefault("ADMIN_SECRET", "test-secret")
+os.environ.setdefault("MEDIAMIXER_ADMIN_SECRET", "test-secret")
 
 from api.main import app, _EDITABLE, _OPTION_FIELDS, _parse_hooks  # noqa: E402
 

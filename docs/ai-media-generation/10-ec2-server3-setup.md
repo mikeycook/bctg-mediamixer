@@ -748,7 +748,7 @@ reading an `EnvironmentFile`, mirroring `/opt/travel/` on server 2.
 ```
 
 `mediamixer.env` holds `DATABASE_URL`, `CLIPS_BUCKET`, `CLIPS_PREFIX`,
-`CLIPS_REGION`, and `ADMIN_SECRET`. It contains **no AWS keys** — S3 access
+`CLIPS_REGION`, and `MEDIAMIXER_ADMIN_SECRET`. It contains **no AWS keys** — S3 access
 comes from the instance role in §8.
 
 Two units, both shipped in the new repository:

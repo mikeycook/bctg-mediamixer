@@ -13,10 +13,14 @@ X-Admin-Secret — marginally better than the admin backend, which
 authenticates nothing.
 
 Env:
-    DATABASE_URL   — required; the mediamixer database
-    ADMIN_SECRET   — required; shared with server 2's backend
-    CLIPS_BUCKET   — default big-city-travel-guide-clips
-    CLIPS_REGION   — default us-east-1
+    DATABASE_URL             — required; the mediamixer database
+    MEDIAMIXER_ADMIN_SECRET  — required; shared with server 2's backend.
+                               Deliberately distinct from server 2's own
+                               ADMIN_SECRET, which authenticates it to the
+                               concierge API — one secret should not open
+                               two unrelated services.
+    CLIPS_BUCKET             — default big-city-travel-guide-clips
+    CLIPS_REGION             — default us-east-1
 """
 
 import os
@@ -40,7 +44,7 @@ app = FastAPI(title="MediaMixer Content Library")
 _BUCKET = os.getenv("CLIPS_BUCKET", "big-city-travel-guide-clips")
 _PREFIX = os.getenv("CLIPS_PREFIX", "ugc-assets/")
 _REGION = os.getenv("CLIPS_REGION", "us-east-1")
-_ADMIN_SECRET = os.getenv("ADMIN_SECRET", "")
+_ADMIN_SECRET = os.getenv("MEDIAMIXER_ADMIN_SECRET", "")
 
 _s3 = S3Interpreter(_BUCKET, region=_REGION)
 
@@ -65,7 +69,8 @@ def require_secret(x_admin_secret: Optional[str] = Header(None)):
     case where the first is misconfigured.
     """
     if not _ADMIN_SECRET:
-        raise HTTPException(status_code=503, detail="ADMIN_SECRET not configured")
+        raise HTTPException(status_code=503,
+                            detail="MEDIAMIXER_ADMIN_SECRET not configured")
     if x_admin_secret != _ADMIN_SECRET:
         raise HTTPException(status_code=401, detail="unauthorized")
 
