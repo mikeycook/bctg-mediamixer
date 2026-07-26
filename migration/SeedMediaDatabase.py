@@ -249,10 +249,13 @@ def verify(db, source_rows, bucket):
         "max_id": max((int(r["id"]) for r in source_rows), default=0),
     }
 
-    seq = db.execute_query(
-        "SELECT last_value FROM pg_get_serial_sequence("
-        "'public.content_library_assets', 'id')::regclass")
-    return loaded, expected, (seq[0][0] if seq else None)
+    # pg_get_serial_sequence returns text, so the cast belongs on the
+    # function argument, not on a FROM item.
+    seq = db.execute_query("""
+        SELECT pg_sequence_last_value(
+            pg_get_serial_sequence('public.content_library_assets', 'id')::regclass)
+    """)
+    return loaded, expected, (seq[0][0] if seq and seq[0][0] is not None else None)
 
 
 def main():
