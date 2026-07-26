@@ -110,8 +110,20 @@ def _rows_as_dicts(db, sql, params=None):
 
 @app.get("/health")
 def health(db=Depends(get_db)):
+    """
+    Reports 503 when the database is unreachable.
+
+    PostgresInterpreter swallows connection errors — it prints and leaves
+    the connection None — so a naive check returns ok:true over a dead
+    connection and the failure only surfaces later as empty results.
+    """
+    if not db.connection:
+        raise HTTPException(status_code=503,
+                            detail="database connection failed; see journalctl")
     rows = db.execute_query("SELECT count(*) FROM public.content_library_assets")
-    return {"ok": True, "assets": rows[0][0] if rows else None}
+    if not rows:
+        raise HTTPException(status_code=503, detail="database query failed")
+    return {"ok": True, "assets": rows[0][0]}
 
 
 @app.get("/admin/content-library")
