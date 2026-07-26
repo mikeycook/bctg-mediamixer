@@ -9,6 +9,13 @@ Type=oneshot
 User=ubuntu
 Group=ubuntu
 WorkingDirectory=/opt/mediamixer/app
+
+# See mediamixer-api.service: ProtectHome=true makes libpq's probe for
+# $HOME/.postgresql/postgresql.crt fail with EACCES, which downgrades the
+# connection to plaintext and gets it refused by RDS. Running the sync by
+# hand works because an interactive shell has a real $HOME.
+Environment=HOME=/opt/mediamixer
+
 EnvironmentFile=/etc/mediamixer/mediamixer.env
 
 ExecStart=/opt/mediamixer/venv/bin/python ContentLibrarySync.py

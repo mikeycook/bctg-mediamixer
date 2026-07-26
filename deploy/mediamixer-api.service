@@ -10,6 +10,15 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/opt/mediamixer/app
 
+# ProtectHome=true masks /home, and libpq probes $HOME/.postgresql/ for a
+# client certificate on every TLS connection. Under the mask that probe
+# returns EACCES rather than ENOENT, libpq treats it as fatal, silently
+# falls back to an unencrypted connection, and RDS rejects it with a
+# confusing "no pg_hba.conf entry ... no encryption". Pointing HOME at a
+# readable directory where the file is simply absent resolves it, and
+# covers .pgpass and the other $HOME lookups too.
+Environment=HOME=/opt/mediamixer
+
 # Read as root before privileges are dropped, so the file stays 600 root:root.
 EnvironmentFile=/etc/mediamixer/mediamixer.env
 
