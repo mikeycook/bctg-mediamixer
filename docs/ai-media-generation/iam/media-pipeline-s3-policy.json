@@ -1,0 +1,61 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ListOnlyUgcAssets",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::big-city-travel-guide-clips",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "ugc-assets/",
+            "ugc-assets/*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "ReadSourceAssets",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:GetObjectVersion"
+      ],
+      "Resource": "arn:aws:s3:::big-city-travel-guide-clips/ugc-assets/*"
+    },
+    {
+      "Sid": "WriteOnlyToExported",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:AbortMultipartUpload"
+      ],
+      "Resource": "arn:aws:s3:::big-city-travel-guide-clips/ugc-assets/exported/*"
+    },
+    {
+      "Sid": "NeverDeleteAnything",
+      "Effect": "Deny",
+      "Action": [
+        "s3:DeleteObject",
+        "s3:DeleteObjectVersion"
+      ],
+      "Resource": "arn:aws:s3:::big-city-travel-guide-clips/*"
+    },
+    {
+      "Sid": "NeverOverwriteSourceMasters",
+      "Effect": "Deny",
+      "Action": [
+        "s3:PutObject",
+        "s3:PutObjectAcl"
+      ],
+      "Resource": [
+        "arn:aws:s3:::big-city-travel-guide-clips/ugc-assets/app/*",
+        "arn:aws:s3:::big-city-travel-guide-clips/ugc-assets/b-roll/*",
+        "arn:aws:s3:::big-city-travel-guide-clips/ugc-assets/reactions/*",
+        "arn:aws:s3:::big-city-travel-guide-clips/ugc-assets/music/*",
+        "arn:aws:s3:::big-city-travel-guide-clips/ugc-assets/captions/*"
+      ]
+    }
+  ]
+}

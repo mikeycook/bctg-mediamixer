@@ -1,0 +1,63 @@
+# Secrets — never commit. Runtime config lives in
+# /etc/mediamixer/mediamixer.env on the server, outside this tree.
+*.env
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*-service-account*.json
+credentials
+.aws/
+
+# Virtualenvs — never commit, not even partially
+venv/
+.venv/
+env/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Media — source clips live in S3, renders live under ugc-assets/exported/.
+# Nothing binary belongs in this repository.
+*.mov
+*.mp4
+*.m4v
+*.webm
+*.mkv
+*.avi
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.heic
+*.webp
+*.srt
+!tests/fixtures/**
+
+# Local scratch
+scratch/
+tmp/
+*.log
+*.dump
+*.sql.gz
+
+# Archives
+*.zip
+*.jar
+*.tar
+*.tar.gz
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*~
