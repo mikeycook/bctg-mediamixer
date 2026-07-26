@@ -311,6 +311,46 @@ aws ec2 describe-instance-type-offerings \
   `ffmpeg` performs and more expensive per GB. The scratch volume above is
   EBS, not EFS.
 
+### Provisioning the scratch volume (before Phase 5)
+
+20 GB gp3 is ample — a 30-second render needs a fraction of it — and costs
+roughly $1.60/month.
+
+```bash
+# From the workstation. The AZ must match server 3, or it cannot attach.
+aws ec2 create-volume --availability-zone us-east-1c --size 20 --volume-type gp3 \
+  --tag-specifications 'ResourceType=volume,Tags=[{Key=Name,Value=mediamixer-scratch}]'
+
+aws ec2 attach-volume --volume-id vol-XXXX \
+  --instance-id i-073374a4c8b0275eb --device /dev/sdf
+```
+
+On server 3. Nitro instances — which `c7i` is — expose volumes as
+`/dev/nvmeNn1` whatever device name was requested, so confirm with `lsblk`
+rather than assuming `/dev/sdf` exists:
+
+```bash
+lsblk
+sudo mkfs.ext4 -L mmscratch /dev/nvme1n1
+sudo mkdir -p /opt/mediamixer/scratch
+sudo mount LABEL=mmscratch /opt/mediamixer/scratch
+sudo chown ubuntu:ubuntu /opt/mediamixer/scratch
+
+echo 'LABEL=mmscratch /opt/mediamixer/scratch ext4 defaults,nofail 0 2' \
+  | sudo tee -a /etc/fstab
+```
+
+Mount by **label, not device name**: Nitro can enumerate devices in a
+different order across reboots. `nofail` keeps a missing volume from
+blocking boot.
+
+**The render worker's unit will need `ReadWritePaths=/opt/mediamixer/scratch`.**
+`ProtectSystem=strict` plus `ReadOnlyPaths=/opt/mediamixer` makes the whole
+tree read-only, so the mount point is read-only to the service even after
+`chown`. The sync job is unaffected because it writes nothing to disk —
+which is precisely why this will not surface until the first render, as a
+permission error pointing at a directory that looks writable.
+
 ---
 
 ## 7. Security group
@@ -468,9 +508,31 @@ rendered videos will exceed. Without it, a failed upload leaves an
 incomplete multipart in the bucket accruing storage charges with no way to
 clean it up.
 
-While you are in the console, confirm **bucket versioning is enabled** on
-`big-city-travel-guide-clips`. It is the last line of defense against an
-accidental overwrite, and `02-canonical-s3-layout.md` assumes it.
+### Bucket versioning
+
+`02-canonical-s3-layout.md` assumes it, and it is the last line of defence
+behind the IAM deny and the export-prefix guard in `S3Exporter`.
+
+```bash
+aws s3api get-bucket-versioning --bucket big-city-travel-guide-clips
+```
+
+Empty output means it is off:
+
+```bash
+aws s3api put-bucket-versioning --bucket big-city-travel-guide-clips \
+  --versioning-configuration Status=Enabled
+```
+
+Two caveats. It is **not retroactive** — only objects written after it is
+enabled gain a version history, so it guards future accidents rather than
+past ones. And it can afterwards be suspended but never removed.
+
+Pair it with a lifecycle rule expiring **noncurrent** versions after ~90
+days. Sources are write-once and renders are immutable, so almost nothing
+should accumulate; the rule bounds the case where something goes wrong
+repeatedly and quietly bills for it. Never apply an expiry to *current*
+versions of source masters.
 
 ---
 
