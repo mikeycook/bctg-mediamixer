@@ -23,11 +23,13 @@ Env:
     CLIPS_REGION             — default us-east-1
 """
 
+import json
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel
@@ -37,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from api.db import get_db  # noqa: E402
 from S3Interpreter import S3Interpreter  # noqa: E402
 import ContentLibraryPaths as clpaths  # noqa: E402
+import ContentLibrarySelect as clselect  # noqa: E402
 import ContentLibrarySync as sync  # noqa: E402
 
 app = FastAPI(title="MediaMixer Content Library")
@@ -240,3 +243,208 @@ def delete_content_library(asset_pk: int, db=Depends(get_db),
             status_code=409,
             detail="cannot delete: asset is referenced by a render")
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Video briefs and renders
+#
+# A brief is what a person authors. A recipe is generated from it and is
+# immutable — there is deliberately no endpoint to edit one, because a
+# hand-edited recipe would no longer explain the video it produced.
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_TEMPLATE_DIR = _REPO_ROOT / "templates"
+_PYTHON = os.getenv("MEDIAMIXER_PYTHON", sys.executable)
+
+
+class BriefBody(BaseModel):
+    brief: Dict[str, Any]
+
+
+def _brief_from(payload: Dict[str, Any]) -> clselect.VideoBrief:
+    cleaned = {k: v for k, v in payload.items() if v not in ("", None)}
+    return clselect.VideoBrief.from_dict(cleaned)
+
+
+@app.get("/admin/templates")
+def list_templates(_=Depends(require_secret)):
+    """
+    The shapes available to a brief, with enough detail for the UI to draw
+    each one as a timeline.
+    """
+    out = []
+    for path in sorted(_TEMPLATE_DIR.glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        out.append({
+            "template_id": data["template_id"],
+            "version": data["version"],
+            "description": data.get("description", ""),
+            "has_reaction_slot": any(
+                "reaction" in s.get("asset_types", []) for s in data["slots"]),
+            "slots": [{
+                "role": s["role"],
+                "asset_types": s["asset_types"],
+                "preferred_ms": s["preferred_ms"],
+                "min_ms": s["min_ms"],
+                "max_ms": s["max_ms"],
+                "required": s.get("required", True),
+                "prefer_subtypes": s.get("prefer_subtypes", []),
+                "match_mood": s.get("match_mood", False),
+                "notes": s.get("notes", ""),
+            } for s in data["slots"]],
+            "captions": data.get("captions", []),
+        })
+    return {"templates": out}
+
+
+@app.get("/admin/render-cities")
+def render_cities(db=Depends(get_db), _=Depends(require_secret)):
+    """
+    Cities that actually have active footage, so the brief form offers only
+    what can produce a video rather than all 892.
+    """
+    rows = _rows_as_dicts(db, """
+        SELECT a.cityid, COALESCE(c.cityname, a.cityid) AS cityname,
+               count(*) FILTER (WHERE a.asset_type = 'broll') AS broll,
+               count(*) FILTER (WHERE a.asset_type = 'app') AS app
+        FROM public.content_library_assets a
+        LEFT JOIN public.cities_reference c ON c.cityid = a.cityid
+        WHERE a.status = 'active'
+          AND a.rights_status IN ('owned', 'licensed')
+          AND a.duplicate_of_asset_id IS NULL
+          AND a.cityid IS NOT NULL
+        GROUP BY a.cityid, c.cityname
+        ORDER BY 2
+    """)
+    return {"cities": rows}
+
+
+@app.get("/admin/render-topics")
+def render_topics(cityid: Optional[str] = Query(None), db=Depends(get_db),
+                  _=Depends(require_secret)):
+    """Subcategories with active footage, optionally scoped to one city."""
+    sql = """
+        SELECT lower(subcategory) AS topic, count(*) AS clips
+        FROM public.content_library_assets
+        WHERE status = 'active' AND rights_status IN ('owned', 'licensed')
+          AND duplicate_of_asset_id IS NULL
+          AND asset_type = 'broll' AND subcategory IS NOT NULL
+    """
+    params = {}
+    if cityid:
+        sql += " AND cityid = %(cityid)s"
+        params["cityid"] = cityid
+    sql += " GROUP BY 1 ORDER BY 2 DESC, 1"
+    return {"topics": _rows_as_dicts(db, sql, params or None)}
+
+
+@app.post("/admin/renders/preview")
+def preview_render(body: BriefBody, db=Depends(get_db), _=Depends(require_secret)):
+    """
+    Runs selection and returns the recipe without rendering anything.
+
+    A brief that cannot be filled returns 422 with the diagnostics rather
+    than an empty result, because "which slot could not be filled and what
+    was it looking for" is the useful answer.
+    """
+    try:
+        recipe = clselect.select(db, _brief_from(body.brief))
+    except clselect.SelectionError as failure:
+        raise HTTPException(status_code=422, detail=failure.as_dict())
+
+    errors = vr_validate(recipe)
+    return {"recipe": recipe, "validation_errors": errors,
+            "total_duration_ms": recipe["total_duration_ms"],
+            "skipped_optional_slots": recipe.get("skipped_optional_slots", [])}
+
+
+def vr_validate(recipe):
+    import VideoRenderer as vr
+    return vr.validate_recipe(recipe)
+
+
+@app.post("/admin/renders")
+def start_render(body: BriefBody, db=Depends(get_db), _=Depends(require_secret)):
+    """
+    Starts a render in the background and returns immediately.
+
+    An encode takes minutes, which is far longer than an HTTP request should
+    hold. Selection runs synchronously first so an unfillable brief fails
+    here with a useful message instead of appearing to start and then dying
+    in a log the operator never sees.
+    """
+    brief = _brief_from(body.brief)
+    try:
+        clselect.select(db, brief)
+    except clselect.SelectionError as failure:
+        raise HTTPException(status_code=422, detail=failure.as_dict())
+
+    environment = body.brief.get("environment", "dev")
+    args = [_PYTHON, str(_REPO_ROOT / "RenderWorker.py"),
+            "--brief", json.dumps(body.brief), "--environment", environment]
+    try:
+        subprocess.Popen(args, cwd=str(_REPO_ROOT),
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"could not start render: {exc}")
+
+    # The worker creates its own render row within a second or two; the UI
+    # picks it up by polling rather than being told an id that does not
+    # exist yet.
+    return {"started": True, "environment": environment}
+
+
+@app.get("/admin/renders")
+def list_renders(limit: int = Query(25, ge=1, le=200), db=Depends(get_db),
+                 _=Depends(require_secret)):
+    rows = _rows_as_dicts(db, """
+        SELECT r.id, r.render_id, r.state, r.environment, r.cityid, r.topic,
+               r.template_id, r.target_duration_ms, r.actual_duration_ms,
+               r.error_code, r.error_detail, r.created_at, r.completed_at,
+               c.cityname,
+               (SELECT count(*) FROM public.content_library_render_artifacts a
+                 WHERE a.render_id = r.id) AS artifacts
+        FROM public.content_library_renders r
+        LEFT JOIN public.cities_reference c ON c.cityid = r.cityid
+        ORDER BY r.id DESC LIMIT %(limit)s
+    """, {"limit": limit})
+    for row in rows:
+        row["created_at"] = str(row.get("created_at") or "")
+        row["completed_at"] = str(row.get("completed_at") or "")
+    return {"renders": rows}
+
+
+@app.get("/admin/renders/{render_id}")
+def render_detail(render_id: str, db=Depends(get_db), _=Depends(require_secret)):
+    rows = _rows_as_dicts(db, """
+        SELECT * FROM public.content_library_renders WHERE render_id = %s
+    """, (render_id,))
+    if not rows:
+        raise HTTPException(status_code=404, detail="no such render")
+    render = rows[0]
+    render["created_at"] = str(render.get("created_at") or "")
+    render["completed_at"] = str(render.get("completed_at") or "")
+
+    artifacts = _rows_as_dicts(db, """
+        SELECT role, s3_key, size_bytes, content_type, checksum_sha256
+        FROM public.content_library_render_artifacts
+        WHERE render_id = %s ORDER BY role
+    """, (render["id"],))
+    for artifact in artifacts:
+        try:
+            artifact["url"] = _s3.presign(artifact["s3_key"])
+        except Exception:
+            artifact["url"] = None
+
+    clips = _rows_as_dicts(db, """
+        SELECT ra.sequence_no, ra.role, ra.source_in_ms, ra.source_out_ms,
+               ra.timeline_in_ms, a.asset_id, a.place_name, a.subtype,
+               a.subcategory, a.s3_key
+        FROM public.content_library_render_assets ra
+        JOIN public.content_library_assets a ON a.id = ra.asset_id
+        WHERE ra.render_id = %s ORDER BY ra.sequence_no
+    """, (render["id"],))
+
+    return {"render": render, "artifacts": artifacts, "clips": clips}
