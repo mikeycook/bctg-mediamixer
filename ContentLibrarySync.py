@@ -193,7 +193,15 @@ ON CONFLICT (bucket_name, s3_key) DO UPDATE SET
     duration_ms = CASE
         WHEN public.content_library_assets.etag IS DISTINCT FROM EXCLUDED.etag
         THEN NULL ELSE public.content_library_assets.duration_ms END,
+    -- Replaced bytes mean the tagging may now describe footage that is no
+    -- longer there. Re-probing is not enough: a clip whose place_name and
+    -- category were confirmed against the old content would otherwise go
+    -- straight into a render. Send it back for a look. The etag IS NOT NULL
+    -- guard stops rows seeded without one from tripping this on first sync.
     status = CASE
+        WHEN public.content_library_assets.etag IS NOT NULL
+             AND public.content_library_assets.etag IS DISTINCT FROM EXCLUDED.etag
+        THEN 'needs_review'
         WHEN public.content_library_assets.status = 'missing' THEN 'discovered'
         ELSE public.content_library_assets.status END
 RETURNING id, (xmax = 0) AS inserted, checksum_sha256, duration_ms, status

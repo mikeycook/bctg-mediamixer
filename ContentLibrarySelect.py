@@ -89,6 +89,10 @@ class Slot:
     required: bool = True
     prefer_topic_match: bool = False
     city_agnostic_ok: bool = False
+    # Shot kinds this slot wants, matched against subtype. A preference,
+    # never a filter — it shapes the sequence when the footage allows and
+    # gets out of the way when it does not.
+    prefer_subtypes: List[str] = field(default_factory=list)
     notes: str = ""
 
 
@@ -207,6 +211,15 @@ def score_candidate(row, brief: VideoBrief, slot: Slot, used_places, used_subcat
             score += 20
         if topic in " ".join(row.get("hook_compatibility") or []).lower():
             score += 10
+
+    # Shot kind, so a template can describe a sequence rather than only a
+    # set of durations: establish outside, go inside, then the payoff. Worth
+    # less than a topic match, so a pizza brief never takes an off-topic
+    # clip merely because it is the right kind of shot.
+    shot = shot_signal(row)
+    if slot.prefer_subtypes and shot:
+        if shot in {s.strip().lower() for s in slot.prefer_subtypes}:
+            score += 18
 
     # Duration closest to the slot's preference needs the least trimming.
     duration = row.get("duration_ms") or 0

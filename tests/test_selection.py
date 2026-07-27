@@ -359,3 +359,55 @@ class TestShotSignalReadsTheTaggedField:
                                    set(), used_shots) > \
                sel.score_candidate(second_exterior, brief, slot, used_places,
                                    set(), used_shots)
+
+
+class TestShotProgression:
+    """
+    Templates describe a sequence, not just a set of durations: establish
+    outside, go inside, then the payoff. Expressed as preferences so a thin
+    library still produces a video.
+    """
+
+    def test_preferred_subtype_scores_higher(self):
+        slot = sel.Slot("hook_visual", ["broll"], 2000, 2500, 3000,
+                        prefer_subtypes=["Exterior"])
+        brief = sel.VideoBrief()
+        exterior = asset(1, "broll", subtype="Exterior")
+        interior = asset(2, "broll", subtype="Interior")
+        assert sel.score_candidate(exterior, brief, slot, set(), set(), set()) > \
+               sel.score_candidate(interior, brief, slot, set(), set(), set())
+
+    def test_topic_still_outranks_shot_kind(self):
+        # An off-topic clip must never win merely for being the right
+        # framing — a hotel exterior is not a pizza video's hook.
+        slot = sel.Slot("hook_visual", ["broll"], 2000, 2500, 3000,
+                        prefer_topic_match=True, prefer_subtypes=["Exterior"])
+        brief = sel.VideoBrief(topic="pizza")
+        on_topic_wrong_shot = asset(1, "broll", subcategory="pizza", subtype="Interior")
+        off_topic_right_shot = asset(2, "broll", subcategory="watches", subtype="Exterior")
+        assert sel.score_candidate(on_topic_wrong_shot, brief, slot, set(), set(), set()) > \
+               sel.score_candidate(off_topic_right_shot, brief, slot, set(), set(), set())
+
+    def test_a_slot_with_no_preference_is_unaffected(self):
+        slot = sel.Slot("cta", ["broll"], 2000, 2500, 3000)
+        brief = sel.VideoBrief()
+        assert sel.score_candidate(asset(1, "broll", subtype="Exterior"),
+                                   brief, slot, set(), set(), set()) == \
+               sel.score_candidate(asset(2, "broll", subtype="Menu"),
+                                   brief, slot, set(), set(), set())
+
+    def test_template_defines_the_expected_progression(self):
+        template = sel.load_template("city-discovery-v1")
+        by_role = {s.role: s.prefer_subtypes for s in template.slots}
+        assert by_role["hook_visual"] == ["Exterior"]
+        assert by_role["destination_proof"] == ["Interior"]
+        assert "Food" in by_role["supporting_visual"]
+        # Listed under both names so the preference survives renaming
+        # subtype Food to Dish.
+        assert "Dish" in by_role["supporting_visual"]
+
+    def test_app_slots_carry_no_shot_preference(self):
+        # App subtypes are features (Guide, Map), not framings.
+        template = sel.load_template("city-discovery-v1")
+        app_slot = next(s for s in template.slots if s.role == "app_demonstration")
+        assert app_slot.prefer_subtypes == []
