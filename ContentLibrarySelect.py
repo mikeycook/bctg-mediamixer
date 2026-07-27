@@ -111,6 +111,12 @@ class Slot:
     # When true and the brief carries a mood, restrict this slot to assets
     # tagged with that emotion.
     match_mood: bool = False
+    # Emotions this slot accepts, independent of the brief. Set when a
+    # template wants a specific arc — intrigue early, delight later — which
+    # a single brief-level mood cannot express. Takes precedence over
+    # match_mood, since a slot asking for something specific should not be
+    # overridden by a blanket setting.
+    emotions: List[str] = field(default_factory=list)
     notes: str = ""
 
 
@@ -191,7 +197,15 @@ def eligible_candidates(db, brief: VideoBrief, slot: Slot):
             sql += " AND (city_slug = %(city_slug)s OR city_agnostic)"
             params["city_slug"] = brief.city_slug
 
-    if slot.match_mood and brief.mood:
+    if slot.emotions:
+        sql += """
+          AND EXISTS (
+              SELECT 1 FROM public.content_library_asset_tags at
+              JOIN public.content_library_tags t ON t.id = at.tag_id
+              WHERE at.asset_id = public.content_library_assets.id
+                AND t.namespace = 'emotion' AND t.slug = ANY(%(emotions)s))"""
+        params["emotions"] = [e.strip().lower() for e in slot.emotions]
+    elif slot.match_mood and brief.mood:
         # Emotion comes from the tag table, not from subtype: the sync
         # merges every folder-derived emotion onto the canonical row, so a
         # performance filed under two emotions is reachable by both. Reading
@@ -481,7 +495,9 @@ def select(db, brief: VideoBrief, template_dir=TEMPLATE_DIR):
                 "min_ms": slot.min_ms,
                 "eligible_before_dedupe": len(candidates),
             }
-            if slot.match_mood and brief.mood:
+            if slot.emotions:
+                detail["emotions"] = slot.emotions
+            elif slot.match_mood and brief.mood:
                 detail["mood"] = brief.mood
             if slot.required:
                 shortfall[slot.role] = detail

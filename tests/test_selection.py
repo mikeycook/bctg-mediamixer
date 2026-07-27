@@ -414,17 +414,24 @@ class TestShotProgression:
 
 
 def reaction(pk, emotions, **kw):
+    kw.setdefault("duration_ms", 4000)
     return asset(pk, "reaction", city_agnostic=True, cityid=None, city_slug=None,
-                 duration_ms=4000, emotions=emotions, **kw)
+                 emotions=emotions, **kw)
 
 
 class MoodAwareDb(FakeDb):
-    """Adds the emotion-tag filter the real SQL applies via a join."""
+    """
+    Adds the emotion-tag filters the real SQL applies via a join: a single
+    mood from the brief, or a set of emotions named on the slot.
+    """
 
     def execute_query_as_dict(self, sql, params=None):
         rows = super().execute_query_as_dict(sql, params)
         if params and "mood" in params:
             rows = [r for r in rows if params["mood"] in (r.get("emotions") or [])]
+        if params and "emotions" in params:
+            wanted = set(params["emotions"])
+            rows = [r for r in rows if wanted & set(r.get("emotions") or [])]
         return rows
 
 
@@ -587,3 +594,63 @@ class TestTopicMatchesTags:
                                    brief, slot, set(), set(), set()) == \
                sel.score_candidate(asset(2, "broll", tag_slugs=[]),
                                    brief, slot, set(), set(), set())
+
+
+class TestReactionArc:
+    """
+    Two reactions with different emotions in one video — intrigue at the
+    top, delight after the payoff. A single brief-level mood cannot express
+    that, so the emotions live on the slots.
+    """
+
+    def library_with_reactions(self):
+        rows = full_library()
+        rows.append(reaction(70, ["surprised"], duration_ms=5000))
+        rows.append(reaction(71, ["excited"], duration_ms=5000))
+        return rows
+
+    def test_each_slot_gets_its_own_emotion(self):
+        brief = sel.VideoBrief(cityid="CIT-00000000002", topic="pizza",
+                               template_id="reaction-arc-v1", seed="t")
+        recipe = sel.select(MoodAwareDb(self.library_with_reactions()), brief)
+        by_role = {c["role"]: c["asset_pk"] for c in recipe["timeline"]}
+        assert by_role["reaction_open"] == 70      # surprised
+        assert by_role["reaction_payoff"] == 71    # excited
+
+    def test_slot_emotions_ignore_the_brief_mood(self):
+        # A blanket mood must not override a slot asking for something
+        # specific, or the arc collapses to one emotion.
+        brief = sel.VideoBrief(cityid="CIT-00000000002", topic="pizza",
+                               template_id="reaction-arc-v1",
+                               mood="happy", seed="t")
+        recipe = sel.select(MoodAwareDb(self.library_with_reactions()), brief)
+        assert any(c["role"] == "reaction_open" for c in recipe["timeline"])
+
+    def test_one_performance_cannot_fill_both_beats(self):
+        # A clip filed under both surprised and excited qualifies for each
+        # slot. Using it twice would read as a mistake, so the checksum
+        # exclusion has to catch it.
+        rows = full_library()
+        rows.append(reaction(72, ["surprised", "excited"], duration_ms=5000))
+        brief = sel.VideoBrief(cityid="CIT-00000000002", topic="pizza",
+                               template_id="reaction-arc-v1", seed="t")
+        recipe = sel.select(MoodAwareDb(rows), brief)
+        reactions = [c for c in recipe["timeline"] if c["role"].startswith("reaction")]
+        assert len(reactions) == 1
+        assert recipe["skipped_optional_slots"] == ["reaction_payoff"]
+
+    def test_a_missing_payoff_costs_the_beat_not_the_video(self):
+        rows = full_library() + [reaction(73, ["surprised"], duration_ms=5000)]
+        brief = sel.VideoBrief(cityid="CIT-00000000002", topic="pizza",
+                               template_id="reaction-arc-v1", seed="t")
+        recipe = sel.select(MoodAwareDb(rows), brief)
+        assert "reaction_payoff" in recipe["skipped_optional_slots"]
+        assert len(recipe["timeline"]) == 5
+
+    def test_no_opener_fails_the_brief(self):
+        # The opener is what makes this template what it is.
+        brief = sel.VideoBrief(cityid="CIT-00000000002", topic="pizza",
+                               template_id="reaction-arc-v1", seed="t")
+        with pytest.raises(sel.SelectionError) as excinfo:
+            sel.select(MoodAwareDb(full_library()), brief)
+        assert "reaction_open" in excinfo.value.diagnostics["unfilled_slots"]
