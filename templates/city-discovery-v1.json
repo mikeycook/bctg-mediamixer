@@ -25,8 +25,8 @@
       "asset_types": ["app"],
       "min_ms": 5000, "preferred_ms": 6500, "max_ms": 8000,
       "required": true,
-      "prefer_topic_match": false,
-      "notes": "The product moment. App recordings only."
+      "prefer_topic_match": true,
+      "notes": "The product moment. App recordings only. Topic matching is on because some app clips are tagged with what is on screen (Food/Pizza) rather than which screen it is (Map/Navigation) — so a pizza brief can show the app finding pizza. A preference, not a filter: briefs with no matching app footage still fill this slot."
     },
     {
       "role": "supporting_visual",
