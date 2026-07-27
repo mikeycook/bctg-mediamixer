@@ -79,5 +79,27 @@
       "prefer_topic_match": false,
       "notes": "Background for generated call-to-action text. No shot preference."
     }
+  ],
+  "captions": [
+    {
+      "role": "hook_visual",
+      "pattern": "{place_name}",
+      "style": "hook",
+      "lead_in_ms": 200,
+      "notes": "Opens on the name of the place. Dropped entirely if place_name is blank \u2014 better no caption than an empty one."
+    },
+    {
+      "role": "destination_proof",
+      "pattern": "{subcategory} in {city}",
+      "style": "label",
+      "lead_in_ms": 400
+    },
+    {
+      "role": "cta",
+      "pattern": "Find it in Big City Travel Guide",
+      "style": "cta",
+      "lead_in_ms": 100,
+      "notes": "Fixed copy, no interpolation, so it cannot fail to resolve."
+    }
   ]
 }

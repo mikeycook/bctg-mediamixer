@@ -119,7 +119,8 @@ def validate_recipe(recipe, schema_path=None):
     return errors
 
 
-def build_filter_graph(recipe, has_audio_flags, loudness_lufs=-14.0):
+def build_filter_graph(recipe, has_audio_flags, loudness_lufs=-14.0,
+                       drawtext_clauses=None):
     """
     Normalizes every clip to the canvas, concatenates, then normalizes
     loudness — all inside the one graph.
@@ -155,13 +156,21 @@ def build_filter_graph(recipe, has_audio_flags, loudness_lufs=-14.0):
                          f"sample_fmts=fltp:channel_layouts=stereo[a{index}]")
         labels.append(f"[v{index}][a{index}]")
 
-    parts.append(f"{''.join(labels)}concat=n={len(recipe['timeline'])}:v=1:a=1[outv][cata]")
+    # Text is drawn after the concat, so a caption's timing is measured
+    # against the finished timeline rather than against whichever clip
+    # happens to be under it — which is what lets a line span a cut.
+    if drawtext_clauses:
+        parts.append(f"{''.join(labels)}concat=n={len(recipe['timeline'])}:v=1:a=1[cutv][cata]")
+        parts.append(f"[cutv]{','.join(drawtext_clauses)}[outv]")
+    else:
+        parts.append(f"{''.join(labels)}concat=n={len(recipe['timeline'])}:v=1:a=1[outv][cata]")
     parts.append(f"[cata]loudnorm=I={loudness_lufs}:TP=-1.5:LRA=11[outa]")
     return ";".join(parts)
 
 
 def build_ffmpeg_command(recipe, input_paths, output_path, ffmpeg="ffmpeg",
-                         has_audio_flags=None, loudness_lufs=-14.0):
+                         has_audio_flags=None, loudness_lufs=-14.0,
+                         drawtext_clauses=None):
     """
     Returns the argv for one render. Pure: no filesystem, no subprocess.
 
@@ -193,7 +202,8 @@ def build_ffmpeg_command(recipe, input_paths, output_path, ffmpeg="ffmpeg",
     # matching their target keeps the master from being pulled down twice.
     args += [
         "-filter_complex", build_filter_graph(recipe, has_audio_flags,
-                                              loudness_lufs=loudness_lufs),
+                                              loudness_lufs=loudness_lufs,
+                                              drawtext_clauses=drawtext_clauses),
         "-map", "[outv]", "-map", "[outa]",
         "-c:v", "libx264", "-preset", "medium", "-crf", "20",
         "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0",

@@ -10,18 +10,24 @@
   "slots": [
     {
       "role": "hook_visual",
-      "asset_types": ["broll"],
+      "asset_types": [
+        "broll"
+      ],
       "min_ms": 2000,
       "preferred_ms": 2500,
       "max_ms": 3000,
       "required": true,
       "prefer_topic_match": true,
-      "prefer_subtypes": ["Exterior"],
+      "prefer_subtypes": [
+        "Exterior"
+      ],
       "notes": "Opens on place. Exterior preferred."
     },
     {
       "role": "app_demonstration",
-      "asset_types": ["app"],
+      "asset_types": [
+        "app"
+      ],
       "min_ms": 5000,
       "preferred_ms": 6000,
       "max_ms": 7000,
@@ -31,7 +37,9 @@
     },
     {
       "role": "reaction_beat",
-      "asset_types": ["reaction"],
+      "asset_types": [
+        "reaction"
+      ],
       "min_ms": 2000,
       "preferred_ms": 3000,
       "max_ms": 4000,
@@ -39,29 +47,52 @@
       "prefer_topic_match": false,
       "city_agnostic_ok": true,
       "match_mood": true,
-      "notes": "Optional, and the only optional slot in either template. Reactions carry no city, so city_agnostic_ok is set — a city filter would exclude every one of them. match_mood restricts this to the brief's mood, read from merged emotion tags so a performance filed under two emotions is reachable by both. If nothing matches, the slot is skipped and the video is built without it."
+      "notes": "Optional, and the only optional slot in either template. Reactions carry no city, so city_agnostic_ok is set \u2014 a city filter would exclude every one of them. match_mood restricts this to the brief's mood, read from merged emotion tags so a performance filed under two emotions is reachable by both. If nothing matches, the slot is skipped and the video is built without it."
     },
     {
       "role": "destination_proof",
-      "asset_types": ["broll"],
+      "asset_types": [
+        "broll"
+      ],
       "min_ms": 4000,
       "preferred_ms": 5000,
       "max_ms": 6000,
       "required": true,
       "prefer_topic_match": true,
-      "prefer_subtypes": ["Interior"],
-      "notes": "Inside the venue — this is real and someone has been there."
+      "prefer_subtypes": [
+        "Interior"
+      ],
+      "notes": "Inside the venue \u2014 this is real and someone has been there."
     },
     {
       "role": "supporting_visual",
-      "asset_types": ["broll"],
+      "asset_types": [
+        "broll"
+      ],
       "min_ms": 3000,
       "preferred_ms": 3500,
       "max_ms": 5000,
       "required": true,
       "prefer_topic_match": true,
-      "prefer_subtypes": ["Food", "Dish"],
+      "prefer_subtypes": [
+        "Food",
+        "Dish"
+      ],
       "notes": "The payoff: the dish itself."
+    }
+  ],
+  "captions": [
+    {
+      "role": "hook_visual",
+      "pattern": "{place_name}",
+      "style": "hook",
+      "lead_in_ms": 200
+    },
+    {
+      "role": "supporting_visual",
+      "pattern": "{subcategory} in {city}",
+      "style": "label",
+      "lead_in_ms": 400
     }
   ]
 }

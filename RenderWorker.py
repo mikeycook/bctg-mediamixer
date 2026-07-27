@@ -45,6 +45,7 @@ import tempfile
 from datetime import datetime, timezone
 from urllib.parse import urlparse, unquote
 
+import CaptionBuilder as captions
 import ContentLibraryProbe as clprobe
 import ContentLibrarySelect as clselect
 import VideoRenderer as vr
@@ -229,11 +230,60 @@ def ffmpeg_version(ffmpeg="ffmpeg"):
         return None
 
 
-def render_artifacts(recipe, input_paths, workdir, ffmpeg="ffmpeg", timeout=1800):
+def plan_and_write_captions(db, recipe, workdir, bucket):
+    """
+    Resolves the template's caption patterns against the clips selection
+    chose, and writes the text files drawtext will read.
+
+    Facts come from the catalog rather than the recipe because the recipe
+    carries identity and timing, not editorial detail. Anything that cannot
+    be resolved is reported and skipped — a caption with a hole in it is
+    worse than no caption.
+    """
+    specs = recipe.get("caption_specs") or []
+    if not specs:
+        return [], []
+
+    pks = [c["asset_pk"] for c in recipe["timeline"]]
+    rows = db.execute_query_as_dict("""
+        SELECT a.id, a.place_name, a.category, a.subcategory, a.subtype,
+               c.cityname
+        FROM public.content_library_assets a
+        LEFT JOIN public.cities_reference c ON c.cityid = a.cityid
+        WHERE a.id = ANY(%(pks)s)
+    """, {"pks": pks})
+    rows = rows if isinstance(rows, list) else []
+    by_pk = {r["id"]: r for r in rows}
+    city_name = next((r.get("cityname") for r in rows if r.get("cityname")), None)
+
+    plan = captions.plan_captions(recipe, by_pk, specs, city_name=city_name)
+    for problem in plan.unresolved:
+        print(f"[CAPT] skipped — {problem}")
+
+    if not plan.captions:
+        return [], []
+
+    prepared = captions.write_caption_files(plan.captions, workdir, recipe["canvas"])
+    font = captions.find_font()
+    if font is None:
+        print("[CAPT] no usable font found; install fonts-dejavu-core. "
+              "Rendering without text.")
+        return [], []
+
+    clauses = captions.drawtext_filters(prepared, recipe["canvas"], fontfile=font)
+    for caption in plan.captions:
+        print(f"[CAPT] {caption.start_ms / 1000:5.1f}s  {caption.style:<6} "
+              f"{caption.text}")
+    return clauses, plan.captions
+
+
+def render_artifacts(recipe, input_paths, workdir, ffmpeg="ffmpeg", timeout=1800,
+                     drawtext_clauses=None):
     """Produces final.mp4, preview.mp4 and thumbnail.jpg locally."""
     final = os.path.join(workdir, "final.mp4")
     code, stderr = vr.run_ffmpeg(
-        vr.build_ffmpeg_command(recipe, input_paths, final, ffmpeg=ffmpeg),
+        vr.build_ffmpeg_command(recipe, input_paths, final, ffmpeg=ffmpeg,
+                                drawtext_clauses=drawtext_clauses),
         timeout=timeout)
     if code != 0 or not os.path.exists(final):
         raise RenderFailure("render_failed", f"ffmpeg exited {code}: {stderr[-800:]}")
@@ -280,8 +330,19 @@ def run(db, s3, exporter, brief, environment, scratch_root, ffmpeg="ffmpeg",
         print(f"[SRC ] fetching {len(recipe['timeline'])} source(s)")
         inputs = download_sources(s3, recipe, workdir, verify=verify_sources)
 
+        clauses, planned = plan_and_write_captions(db, recipe, workdir,
+                                                  exporter.bucket)
+        recipe["captions"] = [c.as_dict() for c in planned]
+
         print("[FFMPEG] encoding")
-        final, made = render_artifacts(recipe, inputs, workdir, ffmpeg=ffmpeg)
+        final, made = render_artifacts(recipe, inputs, workdir, ffmpeg=ffmpeg,
+                                       drawtext_clauses=clauses)
+
+        if planned:
+            srt = os.path.join(workdir, "captions.srt")
+            with open(srt, "w", encoding="utf-8") as handle:
+                handle.write(captions.to_srt(planned))
+            made.append(("captions", srt, "application/x-subrip"))
 
         probe = clprobe.probe(final)
         validation = vr.validate_output(probe, recipe)

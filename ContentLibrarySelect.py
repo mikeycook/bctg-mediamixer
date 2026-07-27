@@ -109,6 +109,8 @@ class Template:
     version: int
     canvas: Dict[str, int]
     slots: List[Slot] = field(default_factory=list)
+    # Text overlays, resolved against whichever clips fill the slots.
+    captions: List[Dict[str, Any]] = field(default_factory=list)
 
 
 def load_template(template_id, template_dir=TEMPLATE_DIR):
@@ -122,6 +124,7 @@ def load_template(template_id, template_dir=TEMPLATE_DIR):
         canvas=data["canvas"],
         slots=[Slot(**{k: v for k, v in s.items() if k != "notes"},
                     notes=s.get("notes", "")) for s in data["slots"]],
+        captions=data.get("captions", []),
     )
 
 
@@ -398,6 +401,7 @@ def build_recipe(brief, template, filled):
             "environment": brief.environment, "seed": brief.seed,
         },
         "canvas": template.canvas,
+        "caption_specs": template.captions,
         "timeline": timeline,
         "total_duration_ms": timeline_at,
         "captions": [],
