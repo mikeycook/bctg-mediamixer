@@ -42,13 +42,34 @@ class TestPathsMatchTheAdminUi:
         assert method in routes().get(path, set())
 
     def test_no_unexpected_admin_surface(self):
+        # Asserted exactly rather than loosely: this service sits behind a
+        # proxy with no inbound auth of its own beyond a shared secret, so
+        # a new route appearing unnoticed is worth failing a build over.
         admin = {p for p in routes() if p.startswith("/admin")}
         assert admin == {
+            # Content library
             "/admin/content-library",
             "/admin/content-library/options",
             "/admin/content-library/sync",
             "/admin/content-library/{asset_pk}",
+            # Briefs and renders
+            "/admin/templates",
+            "/admin/render-cities",
+            "/admin/render-topics",
+            "/admin/renders",
+            "/admin/renders/preview",
+            "/admin/renders/{render_id}",
         }
+
+    def test_there_is_no_way_to_edit_a_recipe(self):
+        # A brief is authored; a recipe is generated and immutable. An
+        # endpoint that mutated one would break the guarantee that a video
+        # is explainable from the recipe that produced it.
+        for path, methods in routes().items():
+            if "recipe" in path:
+                assert methods <= {"GET"}
+        assert "PUT" not in routes().get("/admin/renders/{render_id}", set())
+        assert "DELETE" not in routes().get("/admin/renders/{render_id}", set())
 
 
 class TestHookParsingMatchesTheExistingTab:
