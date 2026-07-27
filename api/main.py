@@ -487,13 +487,27 @@ def start_render(body: BriefBody, db=Depends(get_db), _=Depends(require_secret))
     except clselect.SelectionError as failure:
         raise HTTPException(status_code=422, detail=failure.as_dict())
 
+    # Pre-flight the scratch directory here rather than letting the worker
+    # discover it. The worker creates its render row only after setting up a
+    # workspace, so a failure at this stage leaves no trace anywhere — the
+    # render simply never appears, which is the least debuggable outcome
+    # available.
+    scratch = os.getenv("SCRATCH_DIR", "/opt/mediamixer/scratch")
+    if not os.path.isdir(scratch) or not os.access(scratch, os.W_OK):
+        raise HTTPException(
+            status_code=503,
+            detail=f"scratch directory {scratch} is not writable by this "
+                   f"service. If it exists and is owned correctly, the unit "
+                   f"needs ReadWritePaths={scratch} — systemd's sandbox is "
+                   f"inherited by the render worker.")
+
     environment = body.brief.get("environment", "dev")
     args = [_PYTHON, str(_REPO_ROOT / "RenderWorker.py"),
             "--brief", json.dumps(body.brief), "--environment", environment]
     try:
-        subprocess.Popen(args, cwd=str(_REPO_ROOT),
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         start_new_session=True)
+        # stdio is inherited so the worker's output lands in this service's
+        # journal. Discarding it makes an early crash completely silent.
+        subprocess.Popen(args, cwd=str(_REPO_ROOT), start_new_session=True)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"could not start render: {exc}")
 

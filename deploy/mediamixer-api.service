@@ -33,7 +33,13 @@ ExecStart=/opt/mediamixer/venv/bin/uvicorn api.main:app \
 Restart=on-failure
 RestartSec=5s
 
-# The API only reads the database and presigns URLs; it needs no disk.
+# The API itself only reads the database and presigns URLs. But it spawns
+# RenderWorker for browser-started renders, and a subprocess inherits this
+# sandbox — so without ReadWritePaths the worker dies creating its working
+# directory, before it can even record a failed render. The symptom is a
+# render that never appears at all.
+ReadWritePaths=/opt/mediamixer/scratch
+
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
