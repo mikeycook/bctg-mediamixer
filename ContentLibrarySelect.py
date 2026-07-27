@@ -63,6 +63,9 @@ class VideoBrief:
     environment: str = "dev"
     seed: Optional[str] = None
     allow_landscape: bool = False
+    # Emotion for reaction slots, matched against merged emotion tags:
+    # surprised, excited, happy, shocked, confused.
+    mood: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]):
@@ -76,6 +79,7 @@ class VideoBrief:
             environment=data.get("environment", "dev"),
             seed=data.get("seed"),
             allow_landscape=bool(data.get("allow_landscape", False)),
+            mood=(data.get("mood") or None),
         )
 
 
@@ -93,6 +97,9 @@ class Slot:
     # never a filter — it shapes the sequence when the footage allows and
     # gets out of the way when it does not.
     prefer_subtypes: List[str] = field(default_factory=list)
+    # When true and the brief carries a mood, restrict this slot to assets
+    # tagged with that emotion.
+    match_mood: bool = False
     notes: str = ""
 
 
@@ -162,6 +169,20 @@ def eligible_candidates(db, brief: VideoBrief, slot: Slot):
         else:
             sql += " AND (city_slug = %(city_slug)s OR city_agnostic)"
             params["city_slug"] = brief.city_slug
+
+    if slot.match_mood and brief.mood:
+        # Emotion comes from the tag table, not from subtype: the sync
+        # merges every folder-derived emotion onto the canonical row, so a
+        # performance filed under two emotions is reachable by both. Reading
+        # subtype would see only the folder its canonical key happened to
+        # sit in.
+        sql += """
+          AND EXISTS (
+              SELECT 1 FROM public.content_library_asset_tags at
+              JOIN public.content_library_tags t ON t.id = at.tag_id
+              WHERE at.asset_id = public.content_library_assets.id
+                AND t.namespace = 'emotion' AND t.slug = %(mood)s)"""
+        params["mood"] = brief.mood.strip().lower()
 
     rows = db.execute_query_as_dict(sql, params)
     rows = rows if isinstance(rows, list) else []
@@ -341,9 +362,15 @@ def trim_window(asset, take_ms, lead_in_ms=DEFAULT_LEAD_IN_MS):
     return int(start), int(start + take)
 
 
-def build_recipe(brief, template, assignments, durations):
+def build_recipe(brief, template, filled):
+    """
+    `filled` is a list of (slot, asset, take_ms) for the slots that were
+    actually filled — not a list parallel to template.slots. An optional
+    slot that found nothing is simply absent, and the timeline closes up
+    behind it rather than leaving a gap.
+    """
     timeline, timeline_at = [], 0
-    for slot, asset, take_ms in zip(template.slots, assignments, durations):
+    for slot, asset, take_ms in filled:
         source_in, source_out = trim_window(asset, take_ms)
         timeline.append({
             "asset_id": asset["asset_id"],
@@ -365,7 +392,8 @@ def build_recipe(brief, template, assignments, durations):
         "template": {"id": template.template_id, "version": template.version},
         "brief": {
             "cityid": brief.cityid, "city_slug": brief.city_slug,
-            "topic": brief.topic, "platforms": list(brief.platforms),
+            "topic": brief.topic, "mood": brief.mood,
+            "platforms": list(brief.platforms),
             "target_duration_ms": brief.target_duration_ms,
             "environment": brief.environment, "seed": brief.seed,
         },
@@ -382,15 +410,20 @@ def select(db, brief: VideoBrief, template_dir=TEMPLATE_DIR):
     """
     Produces a recipe, or raises SelectionError with a code from the design
     package: insufficient_assets, rights_not_cleared, recipe_invalid.
+
+    An optional slot that finds nothing is skipped and the video is built
+    without it. Only a *required* slot going unfilled fails the brief —
+    which is what lets a reaction beat be offered to every template without
+    making reaction footage a precondition for making any video at all.
     """
     template = load_template(brief.template_id, template_dir)
     rng = _rng(brief)
     durations = fit_durations(template.slots, brief.target_duration_ms)
 
-    assignments = []
+    filled = []
     used_ids, used_checksums = set(), set()
     used_places, used_subcats, used_shot_types = set(), set(), set()
-    shortfall = {}
+    shortfall, skipped = {}, []
 
     for slot, take_ms in zip(template.slots, durations):
         candidates = eligible_candidates(db, brief, slot)
@@ -402,25 +435,30 @@ def select(db, brief: VideoBrief, template_dir=TEMPLATE_DIR):
                                  used_checksums, used_places, used_subcats, rng,
                                  used_shot_types)
         if chosen is None:
-            shortfall[slot.role] = {
+            detail = {
                 "asset_types": slot.asset_types,
                 "min_ms": slot.min_ms,
                 "eligible_before_dedupe": len(candidates),
             }
+            if slot.match_mood and brief.mood:
+                detail["mood"] = brief.mood
             if slot.required:
-                continue
-        else:
-            used_ids.add(chosen["id"])
-            if chosen.get("checksum_sha256"):
-                used_checksums.add(chosen["checksum_sha256"])
-            if chosen.get("place_name"):
-                used_places.add(chosen["place_name"].lower())
-            if chosen.get("subcategory"):
-                used_subcats.add(chosen["subcategory"].lower())
-            shot = shot_signal(chosen)
-            if shot:
-                used_shot_types.add(shot)
-            assignments.append(chosen)
+                shortfall[slot.role] = detail
+            else:
+                skipped.append(slot.role)
+            continue
+
+        used_ids.add(chosen["id"])
+        if chosen.get("checksum_sha256"):
+            used_checksums.add(chosen["checksum_sha256"])
+        if chosen.get("place_name"):
+            used_places.add(chosen["place_name"].lower())
+        if chosen.get("subcategory"):
+            used_subcats.add(chosen["subcategory"].lower())
+        shot = shot_signal(chosen)
+        if shot:
+            used_shot_types.add(shot)
+        filled.append((slot, chosen, take_ms))
 
     if shortfall:
         raise SelectionError(
@@ -429,8 +467,12 @@ def select(db, brief: VideoBrief, template_dir=TEMPLATE_DIR):
             {"unfilled_slots": shortfall,
              "city": brief.cityid or brief.city_slug,
              "topic": brief.topic,
+             "mood": brief.mood,
              "hint": "assets must be active, rights-cleared, probed, portrait, "
                      "and match the brief's city unless marked city_agnostic"},
         )
 
-    return build_recipe(brief, template, assignments, durations)
+    recipe = build_recipe(brief, template, filled)
+    if skipped:
+        recipe["skipped_optional_slots"] = skipped
+    return recipe

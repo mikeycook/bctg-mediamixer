@@ -411,3 +411,99 @@ class TestShotProgression:
         template = sel.load_template("city-discovery-v1")
         app_slot = next(s for s in template.slots if s.role == "app_demonstration")
         assert app_slot.prefer_subtypes == []
+
+
+def reaction(pk, emotions, **kw):
+    return asset(pk, "reaction", city_agnostic=True, cityid=None, city_slug=None,
+                 duration_ms=4000, emotions=emotions, **kw)
+
+
+class MoodAwareDb(FakeDb):
+    """Adds the emotion-tag filter the real SQL applies via a join."""
+
+    def execute_query_as_dict(self, sql, params=None):
+        rows = super().execute_query_as_dict(sql, params)
+        if params and "mood" in params:
+            rows = [r for r in rows if params["mood"] in (r.get("emotions") or [])]
+        return rows
+
+
+class TestOptionalSlots:
+    def test_an_unfilled_optional_slot_is_skipped_not_fatal(self):
+        # The whole point of an optional reaction beat: no reaction footage
+        # for this mood must not stop the video being made.
+        rows = full_library()          # contains no reactions at all
+        brief = sel.VideoBrief(cityid="CIT-00000000002", topic="pizza",
+                               template_id="city-discovery-reaction-v1",
+                               mood="surprised", seed="t")
+        recipe = sel.select(MoodAwareDb(rows), brief)
+        assert [c["role"] for c in recipe["timeline"]] == [
+            "hook_visual", "app_demonstration", "destination_proof",
+            "supporting_visual"]
+        assert recipe["skipped_optional_slots"] == ["reaction_beat"]
+
+    def test_the_timeline_closes_up_behind_a_skipped_slot(self):
+        rows = full_library()
+        brief = sel.VideoBrief(cityid="CIT-00000000002", topic="pizza",
+                               template_id="city-discovery-reaction-v1", seed="t")
+        recipe = sel.select(MoodAwareDb(rows), brief)
+        at = 0
+        for clip in recipe["timeline"]:
+            assert clip["timeline_in_ms"] == at
+            at += clip["source_out_ms"] - clip["source_in_ms"]
+        assert recipe["total_duration_ms"] == at
+
+    def test_a_required_slot_still_fails_the_brief(self):
+        rows = [r for r in full_library() if r["asset_type"] != "app"]
+        brief = sel.VideoBrief(cityid="CIT-00000000002", topic="pizza",
+                               template_id="city-discovery-reaction-v1", seed="t")
+        with pytest.raises(sel.SelectionError):
+            sel.select(MoodAwareDb(rows), brief)
+
+
+class TestMood:
+    def test_the_mood_chooses_the_reaction(self):
+        rows = full_library() + [
+            reaction(80, ["surprised"]), reaction(81, ["happy"])]
+        brief = sel.VideoBrief(cityid="CIT-00000000002", topic="pizza",
+                               template_id="city-discovery-reaction-v1",
+                               mood="happy", seed="t")
+        recipe = sel.select(MoodAwareDb(rows), brief)
+        beat = next(c for c in recipe["timeline"] if c["role"] == "reaction_beat")
+        assert beat["asset_pk"] == 81
+
+    def test_a_performance_filed_under_two_emotions_answers_to_both(self):
+        # This is what the alias merge buys: one clip, both moods.
+        rows = full_library() + [reaction(82, ["surprised", "excited"])]
+        for mood in ("surprised", "excited"):
+            brief = sel.VideoBrief(cityid="CIT-00000000002", topic="pizza",
+                                   template_id="city-discovery-reaction-v1",
+                                   mood=mood, seed="t")
+            recipe = sel.select(MoodAwareDb(rows), brief)
+            assert any(c["role"] == "reaction_beat" for c in recipe["timeline"])
+
+    def test_reactions_are_not_excluded_by_the_brief_city(self):
+        # Reactions carry no city; without city_agnostic_ok every one would
+        # be filtered out and the slot would never fill.
+        template = sel.load_template("city-discovery-reaction-v1")
+        beat = next(s for s in template.slots if s.role == "reaction_beat")
+        assert beat.city_agnostic_ok is True
+        assert beat.match_mood is True
+        assert beat.required is False
+
+    def test_mood_is_recorded_on_the_recipe(self):
+        rows = full_library() + [reaction(83, ["shocked"])]
+        brief = sel.VideoBrief(cityid="CIT-00000000002", topic="pizza",
+                               template_id="city-discovery-reaction-v1",
+                               mood="shocked", seed="t")
+        assert sel.select(MoodAwareDb(rows), brief)["brief"]["mood"] == "shocked"
+
+
+class TestTemplateOrdering:
+    def test_the_app_moves_earlier_in_the_reaction_template(self):
+        # Slot order in the JSON is the order in the video; that is the
+        # whole mechanism for rearranging one.
+        roles = [s.role for s in sel.load_template("city-discovery-reaction-v1").slots]
+        assert roles.index("app_demonstration") < roles.index("destination_proof")
+        base = [s.role for s in sel.load_template("city-discovery-v1").slots]
+        assert base.index("app_demonstration") > base.index("destination_proof")

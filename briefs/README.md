@@ -15,6 +15,7 @@ under rules that fail closed rather than substituting something plausible.
 | `target_duration_ms` | no | Default 20000. Distributed across slots within their individual limits, so the result lands near this rather than exactly on it. |
 | `platforms` | no | Recorded on the render for later attribution. Does not change the output today — everything renders 1080×1920. |
 | `seed` | no | Any string. The same brief and seed reproduce the same recipe. Omit and one is derived from the brief, which is still stable for that brief. |
+| `mood` | no | `surprised`, `excited`, `happy`, `shocked`, `confused`. Only affects templates with a reaction slot. Matched against merged emotion tags, so a performance filed under two emotions answers to both. |
 | `allow_landscape` | no | Default false. Landscape clips are excluded because filling a 9:16 frame from one means cropping most of it away. |
 
 \* One of `cityid` or `city_slug`.
@@ -34,6 +35,22 @@ python3 RenderWorker.py --brief '{"cityid":"CIT-00000000002","topic":"tacos"}'
 
 Always dry-run first. It costs a second and shows exactly which clips,
 which trim windows, and how long the result will be.
+
+## Changing the order, or adding a reaction
+
+The slot order in a template *is* the order in the video. To move the app
+demonstration earlier, reorder that array — that is the entire mechanism.
+Keep arrangements as separate templates rather than editing one in place,
+so a brief can choose between them and existing renders stay explicable.
+
+`city-discovery-reaction-v1` does both: the app moves to second, and an
+optional reaction beat sits after it, chosen by `mood`.
+
+That beat is optional in the real sense — if no reaction matches the mood,
+the slot is skipped and the video is built without it, with the skipped
+role recorded on the recipe. Only *required* slots going unfilled fail a
+brief. That is what allows a reaction beat to be offered on any template
+without making reaction footage a precondition for making any video.
 
 ## What a brief cannot do
 

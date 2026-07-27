@@ -1,0 +1,10 @@
+{
+  "cityid": "CIT-00000000002",
+  "topic": "pizza",
+  "template_id": "city-discovery-reaction-v1",
+  "mood": "surprised",
+  "target_duration_ms": 20000,
+  "platforms": ["instagram-reels", "tiktok"],
+  "environment": "dev",
+  "seed": "ny-pizza-reaction-001"
+}
