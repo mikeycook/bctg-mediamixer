@@ -279,3 +279,83 @@ class TestTemplates:
         # them and make the template unusable.
         template = sel.load_template("reaction-hook-v1")
         assert template.slots[0].city_agnostic_ok is True
+
+
+class TestShotTypeVariety:
+    """
+    Depth on one location is only useful if the selector can tell the
+    angles apart. Two exteriors of the same restaurant reads as an editing
+    error; an exterior then a dish close-up of that restaurant reads as a
+    sequence.
+    """
+
+    def test_repeating_a_shot_type_is_penalised(self):
+        slot = sel.Slot("x", ["broll"], 2000, 2500, 3000)
+        clip = asset(1, "broll", shot_type="exterior")
+        brief = sel.VideoBrief()
+        fresh = sel.score_candidate(clip, brief, slot, set(), set(), set())
+        repeat = sel.score_candidate(clip, brief, slot, set(), set(), {"exterior"})
+        assert repeat < fresh
+
+    def test_same_place_and_same_shot_type_is_the_worst_case(self):
+        slot = sel.Slot("x", ["broll"], 2000, 2500, 3000)
+        clip = asset(1, "broll", place_name="L'Industrie Pizza", shot_type="exterior")
+        brief = sel.VideoBrief()
+        both = sel.score_candidate(clip, brief, slot, {"l'industrie pizza"},
+                                   set(), {"exterior"})
+        place_only = sel.score_candidate(clip, brief, slot, {"l'industrie pizza"},
+                                         set(), set())
+        assert both < place_only
+
+    def test_a_different_angle_at_a_used_place_still_beats_an_off_topic_clip(self):
+        # The point of the two penalties being separate: eight clips of two
+        # restaurants stay usable, provided the angles differ.
+        slot = sel.Slot("supporting_visual", ["broll"], 3000, 4000, 5000,
+                        prefer_topic_match=True)
+        brief = sel.VideoBrief(topic="pizza")
+        same_place_new_angle = asset(1, "broll", category="food", subcategory="pizza",
+                                     place_name="L'Industrie Pizza", shot_type="close-up")
+        off_topic = asset(2, "broll", category="hotel", place_name="Some Hotel",
+                          shot_type="wide")
+        assert sel.score_candidate(same_place_new_angle, brief, slot,
+                                   {"l'industrie pizza"}, set(), {"exterior"}) > \
+               sel.score_candidate(off_topic, brief, slot, set(), set(), set())
+
+    def test_untagged_shot_type_does_not_penalise(self):
+        slot = sel.Slot("x", ["broll"], 2000, 2500, 3000)
+        clip = asset(1, "broll", shot_type=None)
+        brief = sel.VideoBrief()
+        assert sel.score_candidate(clip, brief, slot, set(), set(), {"exterior"}) == \
+               sel.score_candidate(clip, brief, slot, set(), set(), set())
+
+
+class TestShotSignalReadsTheTaggedField:
+    """
+    Shot type was entered into `subtype` during review, not into the
+    `shot_type` column the schema provides. The selector reads where the
+    data is.
+    """
+
+    def test_subtype_is_used_when_shot_type_is_empty(self):
+        assert sel.shot_signal({"subtype": "Exterior", "shot_type": None}) == "exterior"
+
+    def test_shot_type_wins_when_both_are_present(self):
+        assert sel.shot_signal({"subtype": "Exterior", "shot_type": "close-up"}) == "close-up"
+
+    def test_absent_on_both_is_none(self):
+        assert sel.shot_signal({"subtype": None, "shot_type": None}) is None
+        assert sel.shot_signal({}) is None
+
+    def test_two_exteriors_of_one_place_are_penalised_via_subtype(self):
+        slot = sel.Slot("supporting_visual", ["broll"], 3000, 4000, 5000,
+                        prefer_topic_match=True)
+        brief = sel.VideoBrief(topic="pizza")
+        second_exterior = asset(1, "broll", category="food", subcategory="pizza",
+                                place_name="L'Industrie Pizza", subtype="Exterior")
+        different_angle = asset(2, "broll", category="food", subcategory="pizza",
+                                place_name="L'Industrie Pizza", subtype="Interior")
+        used_places, used_shots = {"l'industrie pizza"}, {"exterior"}
+        assert sel.score_candidate(different_angle, brief, slot, used_places,
+                                   set(), used_shots) > \
+               sel.score_candidate(second_exterior, brief, slot, used_places,
+                                   set(), used_shots)

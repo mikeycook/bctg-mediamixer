@@ -120,9 +120,9 @@ def load_template(template_id, template_dir=TEMPLATE_DIR):
 
 ELIGIBLE_SQL = """
 SELECT id, asset_id, s3_key, s3_version_id, checksum_sha256, asset_type,
-       category, subcategory, place_name, cityid, city_slug, city_agnostic,
-       duration_ms, width, height, orientation, has_audio, frame_rate,
-       quality_score, hook_compatibility, shot_type, last_seen_at
+       category, subcategory, subtype, place_name, cityid, city_slug,
+       city_agnostic, duration_ms, width, height, orientation, has_audio,
+       frame_rate, quality_score, hook_compatibility, shot_type, last_seen_at
 FROM public.content_library_assets
 WHERE status = 'active'
   AND rights_status = ANY(%(rights)s)
@@ -174,11 +174,27 @@ def eligible_candidates(db, brief: VideoBrief, slot: Slot):
 # Ranking — pure
 # ---------------------------------------------------------------------------
 
-def score_candidate(row, brief: VideoBrief, slot: Slot, used_places, used_subcats):
+def shot_signal(row):
+    """
+    What kind of shot this is, for variety purposes.
+
+    The catalog carries this in `subtype` — Interior, Exterior, Food — which
+    is where it was actually entered during review. `shot_type` exists in
+    the schema for the controlled vocabulary in `04-asset-standards.md` and
+    takes precedence when populated, but reading `subtype` means the
+    penalty works against the data as tagged rather than against the data
+    the schema hoped for.
+    """
+    return ((row.get("shot_type") or row.get("subtype") or "") or "").strip().lower() or None
+
+
+def score_candidate(row, brief: VideoBrief, slot: Slot, used_places, used_subcats,
+                    used_shot_types=None):
     """
     Higher is better. Preferences only — anything disqualifying was already
     removed by eligible_candidates.
     """
+    used_shot_types = used_shot_types or set()
     score = 0.0
     topic = (brief.topic or "").strip().lower()
 
@@ -202,11 +218,22 @@ def score_candidate(row, brief: VideoBrief, slot: Slot, used_places, used_subcat
     if quality:
         score += float(quality) * 3
 
-    # Variety: two shots of the same restaurant back to back look like a
-    # mistake, so repeats are penalised rather than forbidden.
+    # Variety, penalised rather than forbidden — with a limited library,
+    # refusing a repeat outright would fail briefs that could still produce
+    # a decent video.
+    #
+    # Place and shot type are separate penalties because they describe
+    # different mistakes. Two shots of the same restaurant is repetitive;
+    # two *exteriors* of the same restaurant looks like an editing error.
+    # Together they make that exact case the worst-scoring option, while an
+    # exterior followed by a dish close-up of the same place stays viable —
+    # which is what makes depth on one location useful rather than wasted.
     place = (row.get("place_name") or "").lower()
     if place and place in used_places:
         score -= 30
+    shot = shot_signal(row)
+    if shot and shot in used_shot_types:
+        score -= 12
     subcat = (row.get("subcategory") or "").lower()
     if subcat and subcat in used_subcats:
         score -= 8
@@ -222,7 +249,7 @@ def _rng(brief: VideoBrief):
 
 
 def choose_for_slot(candidates, brief, slot, used_ids, used_checksums,
-                    used_places, used_subcats, rng):
+                    used_places, used_subcats, rng, used_shot_types=None):
     """
     Best-scoring candidate not already committed to this render.
 
@@ -236,7 +263,8 @@ def choose_for_slot(candidates, brief, slot, used_ids, used_checksums,
     if not pool:
         return None
 
-    scored = [(score_candidate(c, brief, slot, used_places, used_subcats), c)
+    scored = [(score_candidate(c, brief, slot, used_places, used_subcats,
+                              used_shot_types), c)
               for c in pool]
     best = max(s for s, _ in scored)
     # Ties broken by seeded choice, so a rerun of the same brief is stable
@@ -347,7 +375,8 @@ def select(db, brief: VideoBrief, template_dir=TEMPLATE_DIR):
     durations = fit_durations(template.slots, brief.target_duration_ms)
 
     assignments = []
-    used_ids, used_checksums, used_places, used_subcats = set(), set(), set(), set()
+    used_ids, used_checksums = set(), set()
+    used_places, used_subcats, used_shot_types = set(), set(), set()
     shortfall = {}
 
     for slot, take_ms in zip(template.slots, durations):
@@ -357,7 +386,8 @@ def select(db, brief: VideoBrief, template_dir=TEMPLATE_DIR):
         candidates = [c for c in candidates if (c.get("duration_ms") or 0) >= slot.min_ms]
 
         chosen = choose_for_slot(candidates, brief, slot, used_ids,
-                                 used_checksums, used_places, used_subcats, rng)
+                                 used_checksums, used_places, used_subcats, rng,
+                                 used_shot_types)
         if chosen is None:
             shortfall[slot.role] = {
                 "asset_types": slot.asset_types,
@@ -374,6 +404,9 @@ def select(db, brief: VideoBrief, template_dir=TEMPLATE_DIR):
                 used_places.add(chosen["place_name"].lower())
             if chosen.get("subcategory"):
                 used_subcats.add(chosen["subcategory"].lower())
+            shot = shot_signal(chosen)
+            if shot:
+                used_shot_types.add(shot)
             assignments.append(chosen)
 
     if shortfall:
