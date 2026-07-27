@@ -53,7 +53,7 @@ class SelectionError(Exception):
 
 
 @dataclass(frozen=True)
-class VideoBrief:
+class VideoBrief:  # noqa: D101
     cityid: Optional[str] = None
     city_slug: Optional[str] = None
     topic: Optional[str] = None
@@ -67,6 +67,9 @@ class VideoBrief:
     # second alternate shot of the same place exists precisely so successive
     # variations differ. Turn it off for a strictly reproducible edit.
     prefer_unused: bool = True
+    # Literal caption text for this one video, keyed by slot role. Overrides
+    # the template's pattern where set.
+    caption_overrides: Dict[str, str] = field(default_factory=dict)
     # Emotion for reaction slots, matched against merged emotion tags:
     # surprised, excited, happy, shocked, confused.
     mood: Optional[str] = None
@@ -85,6 +88,9 @@ class VideoBrief:
             allow_landscape=bool(data.get("allow_landscape", False)),
             mood=(data.get("mood") or None),
             prefer_unused=bool(data.get("prefer_unused", True)),
+            caption_overrides={k: str(v) for k, v in
+                               (data.get("caption_overrides") or {}).items()
+                               if str(v).strip()},
         )
 
 
@@ -429,6 +435,7 @@ def build_recipe(brief, template, filled):
             "platforms": list(brief.platforms),
             "target_duration_ms": brief.target_duration_ms,
             "environment": brief.environment, "seed": brief.seed,
+            "caption_overrides": dict(brief.caption_overrides),
         },
         "canvas": template.canvas,
         "caption_specs": template.captions,

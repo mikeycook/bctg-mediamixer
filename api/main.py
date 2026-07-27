@@ -39,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from api.db import get_db  # noqa: E402
 from S3Interpreter import S3Interpreter  # noqa: E402
 import ContentLibraryPaths as clpaths  # noqa: E402
+import CaptionBuilder as captions  # noqa: E402
 import ContentLibrarySelect as clselect  # noqa: E402
 import ContentLibrarySync as sync  # noqa: E402
 
@@ -448,10 +449,21 @@ def preview_render(body: BriefBody, db=Depends(get_db), _=Depends(require_secret
     except clselect.SelectionError as failure:
         raise HTTPException(status_code=422, detail=failure.as_dict())
 
+    brief = _brief_from(body.brief)
+    plan = captions.plan_for_recipe(db, recipe, brief.caption_overrides)
+    recipe["captions"] = [c.as_dict() for c in plan.captions]
+
     errors = vr_validate(recipe)
     return {"recipe": recipe, "validation_errors": errors,
             "total_duration_ms": recipe["total_duration_ms"],
-            "skipped_optional_slots": recipe.get("skipped_optional_slots", [])}
+            "skipped_optional_slots": recipe.get("skipped_optional_slots", []),
+            # Which slots carry text, so the UI can offer an override box
+            # for each one without knowing the template.
+            "caption_slots": [
+                {"role": spec["role"], "style": spec.get("style", "label"),
+                 "pattern": spec["pattern"]}
+                for spec in (recipe.get("caption_specs") or [])],
+            "caption_problems": plan.unresolved}
 
 
 def vr_validate(recipe):

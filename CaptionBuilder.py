@@ -131,7 +131,8 @@ def facts_for_clip(clip, asset, city_name=None):
     }
 
 
-def plan_captions(recipe, assets_by_pk, caption_specs, city_name=None):
+def plan_captions(recipe, assets_by_pk, caption_specs, city_name=None,
+                  overrides=None):
     """
     Turns template caption specs into timed captions against the recipe.
 
@@ -153,7 +154,15 @@ def plan_captions(recipe, assets_by_pk, caption_specs, city_name=None):
             continue
 
         asset = assets_by_pk.get(clip["asset_pk"], {})
-        text = fill_pattern(spec["pattern"], facts_for_clip(clip, asset, city_name))
+        # An override is literal text a person wrote for this one video. It
+        # skips pattern filling entirely, so it can say anything — which is
+        # why it is only ever set by hand, never generated.
+        override = (overrides or {}).get(role)
+        if override is not None and str(override).strip():
+            text = str(override).strip()
+        else:
+            text = fill_pattern(spec["pattern"],
+                                facts_for_clip(clip, asset, city_name))
         if text is None:
             plan.unresolved.append(
                 f"{role}: pattern {spec['pattern']!r} has no value for every field")
@@ -278,3 +287,32 @@ def find_font(candidates=None):
         if os.path.exists(path):
             return path
     return None
+
+
+def plan_for_recipe(db, recipe, overrides=None):
+    """
+    Resolves a recipe's caption specs against the catalog.
+
+    Shared by the render worker and by preview, so what the operator sees
+    before rendering is what actually gets burned in — a preview that
+    guessed differently would be worse than none.
+    """
+    specs = recipe.get("caption_specs") or []
+    if not specs:
+        return CaptionPlan()
+
+    pks = [c["asset_pk"] for c in recipe.get("timeline", [])]
+    if not pks:
+        return CaptionPlan()
+
+    rows = db.execute_query_as_dict("""
+        SELECT a.id, a.place_name, a.category, a.subcategory, a.subtype,
+               c.cityname
+        FROM public.content_library_assets a
+        LEFT JOIN public.cities_reference c ON c.cityid = a.cityid
+        WHERE a.id = ANY(%(pks)s)
+    """, {"pks": pks})
+    rows = rows if isinstance(rows, list) else []
+    city_name = next((r.get("cityname") for r in rows if r.get("cityname")), None)
+    return plan_captions(recipe, {r["id"]: r for r in rows}, specs,
+                         city_name=city_name, overrides=overrides)

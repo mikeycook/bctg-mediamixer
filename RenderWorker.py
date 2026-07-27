@@ -230,36 +230,16 @@ def ffmpeg_version(ffmpeg="ffmpeg"):
         return None
 
 
-def plan_and_write_captions(db, recipe, workdir, bucket):
+def plan_and_write_captions(db, recipe, workdir, overrides=None):
     """
-    Resolves the template's caption patterns against the clips selection
-    chose, and writes the text files drawtext will read.
+    Resolves captions and writes the text files drawtext will read.
 
-    Facts come from the catalog rather than the recipe because the recipe
-    carries identity and timing, not editorial detail. Anything that cannot
-    be resolved is reported and skipped — a caption with a hole in it is
-    worse than no caption.
+    Planning is shared with the preview endpoint, so what the operator saw
+    before rendering is what gets burned in.
     """
-    specs = recipe.get("caption_specs") or []
-    if not specs:
-        return [], []
-
-    pks = [c["asset_pk"] for c in recipe["timeline"]]
-    rows = db.execute_query_as_dict("""
-        SELECT a.id, a.place_name, a.category, a.subcategory, a.subtype,
-               c.cityname
-        FROM public.content_library_assets a
-        LEFT JOIN public.cities_reference c ON c.cityid = a.cityid
-        WHERE a.id = ANY(%(pks)s)
-    """, {"pks": pks})
-    rows = rows if isinstance(rows, list) else []
-    by_pk = {r["id"]: r for r in rows}
-    city_name = next((r.get("cityname") for r in rows if r.get("cityname")), None)
-
-    plan = captions.plan_captions(recipe, by_pk, specs, city_name=city_name)
+    plan = captions.plan_for_recipe(db, recipe, overrides)
     for problem in plan.unresolved:
         print(f"[CAPT] skipped — {problem}")
-
     if not plan.captions:
         return [], []
 
@@ -331,7 +311,7 @@ def run(db, s3, exporter, brief, environment, scratch_root, ffmpeg="ffmpeg",
         inputs = download_sources(s3, recipe, workdir, verify=verify_sources)
 
         clauses, planned = plan_and_write_captions(db, recipe, workdir,
-                                                  exporter.bucket)
+                                                  brief.caption_overrides)
         recipe["captions"] = [c.as_dict() for c in planned]
 
         print("[FFMPEG] encoding")
