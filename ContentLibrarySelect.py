@@ -145,7 +145,10 @@ SELECT id, asset_id, s3_key, s3_version_id, checksum_sha256, asset_type,
        (SELECT count(*) FROM public.content_library_render_assets ra
         JOIN public.content_library_renders r ON r.id = ra.render_id
         WHERE ra.asset_id = public.content_library_assets.id
-          AND r.state = 'succeeded') AS use_count
+          AND r.state = 'succeeded') AS use_count,
+       (SELECT array_agg(t.slug) FROM public.content_library_asset_tags at
+        JOIN public.content_library_tags t ON t.id = at.tag_id
+        WHERE at.asset_id = public.content_library_assets.id) AS tag_slugs
 FROM public.content_library_assets
 WHERE status = 'active'
   AND rights_status = ANY(%(rights)s)
@@ -242,6 +245,11 @@ def score_candidate(row, brief: VideoBrief, slot: Slot, used_places, used_subcat
             score += 25
         elif topic in (row.get("place_name") or "").lower():
             score += 20
+        # Tags are brief-targetable too, which is what makes a descriptor
+        # like `upscale` usable — venue style does not belong in the cuisine
+        # field, but it is still something worth building a video around.
+        elif topic in {(t or "").lower() for t in (row.get("tag_slugs") or [])}:
+            score += 22
         if topic in " ".join(row.get("hook_compatibility") or []).lower():
             score += 10
 

@@ -554,3 +554,36 @@ class TestRotationAcrossRenders:
     def test_the_default_is_on(self):
         assert sel.VideoBrief().prefer_unused is True
         assert sel.VideoBrief.from_dict({}).prefer_unused is True
+
+
+class TestTopicMatchesTags:
+    """
+    Venue style does not belong in the cuisine field, but it is still a
+    thing to build a video around. Tags are where it lives, so a topic has
+    to be able to reach them.
+    """
+
+    def test_a_tag_satisfies_a_topic(self):
+        slot = sel.Slot("x", ["broll"], 2000, 2500, 3000, prefer_topic_match=True)
+        brief = sel.VideoBrief(topic="upscale")
+        tagged = asset(1, "broll", subcategory="french", tag_slugs=["upscale"])
+        plain = asset(2, "broll", subcategory="french", tag_slugs=[])
+        assert sel.score_candidate(tagged, brief, slot, set(), set(), set()) > \
+               sel.score_candidate(plain, brief, slot, set(), set(), set())
+
+    def test_subcategory_still_outranks_a_tag(self):
+        # The typed field is the stronger signal; tags supplement it.
+        slot = sel.Slot("x", ["broll"], 2000, 2500, 3000, prefer_topic_match=True)
+        brief = sel.VideoBrief(topic="pizza")
+        by_field = asset(1, "broll", subcategory="pizza")
+        by_tag = asset(2, "broll", subcategory="french", tag_slugs=["pizza"])
+        assert sel.score_candidate(by_field, brief, slot, set(), set(), set()) > \
+               sel.score_candidate(by_tag, brief, slot, set(), set(), set())
+
+    def test_untagged_clips_are_unaffected(self):
+        slot = sel.Slot("x", ["broll"], 2000, 2500, 3000, prefer_topic_match=True)
+        brief = sel.VideoBrief(topic="upscale")
+        assert sel.score_candidate(asset(1, "broll", tag_slugs=None),
+                                   brief, slot, set(), set(), set()) == \
+               sel.score_candidate(asset(2, "broll", tag_slugs=[]),
+                                   brief, slot, set(), set(), set())
