@@ -99,6 +99,20 @@ class TestFfmpegCommand:
         assert "0.250" in args and "5.000" in args
         assert args.index("-ss") < args.index("-i")
 
+    def test_no_simple_filtering_alongside_the_complex_graph(self):
+        # ffmpeg refuses -af or -vf on a stream fed from -filter_complex,
+        # and says so in a message that reads like an audio problem. The
+        # first real render failed on exactly this.
+        args = vr.build_ffmpeg_command(recipe(), ["/tmp/a.mov", "/tmp/b.mov"], "/tmp/out.mp4")
+        assert "-filter_complex" in args
+        assert "-af" not in args
+        assert "-vf" not in args
+
+    def test_loudness_normalization_happens_inside_the_graph(self):
+        graph = vr.build_filter_graph(recipe(), [True, True])
+        assert "loudnorm=" in graph
+        assert graph.rstrip().endswith("[outa]")
+
     def test_delivery_codecs_are_pinned(self):
         args = vr.build_ffmpeg_command(recipe(), ["/tmp/a.mov", "/tmp/b.mov"], "/tmp/out.mp4")
         for expected in ("libx264", "yuv420p", "aac", "+faststart"):
@@ -135,7 +149,7 @@ class TestFilterGraph:
     def test_concat_covers_every_segment(self):
         three = [clip(1, 0, 1000, 0), clip(2, 0, 1000, 1000), clip(3, 0, 1000, 2000)]
         graph = vr.build_filter_graph(recipe(three), [True, True, True])
-        assert "concat=n=3:v=1:a=1[outv][outa]" in graph
+        assert "concat=n=3:v=1:a=1[outv][cata]" in graph
 
 
 class TestRenderId:
