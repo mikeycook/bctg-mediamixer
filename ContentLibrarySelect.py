@@ -63,6 +63,10 @@ class VideoBrief:
     environment: str = "dev"
     seed: Optional[str] = None
     allow_landscape: bool = False
+    # Rotate through the library across renders. On by default, because a
+    # second alternate shot of the same place exists precisely so successive
+    # variations differ. Turn it off for a strictly reproducible edit.
+    prefer_unused: bool = True
     # Emotion for reaction slots, matched against merged emotion tags:
     # surprised, excited, happy, shocked, confused.
     mood: Optional[str] = None
@@ -80,6 +84,7 @@ class VideoBrief:
             seed=data.get("seed"),
             allow_landscape=bool(data.get("allow_landscape", False)),
             mood=(data.get("mood") or None),
+            prefer_unused=bool(data.get("prefer_unused", True)),
         )
 
 
@@ -136,7 +141,11 @@ ELIGIBLE_SQL = """
 SELECT id, asset_id, s3_key, s3_version_id, checksum_sha256, asset_type,
        category, subcategory, subtype, place_name, cityid, city_slug,
        city_agnostic, duration_ms, width, height, orientation, has_audio,
-       frame_rate, quality_score, hook_compatibility, shot_type, last_seen_at
+       frame_rate, quality_score, hook_compatibility, shot_type, last_seen_at,
+       (SELECT count(*) FROM public.content_library_render_assets ra
+        JOIN public.content_library_renders r ON r.id = ra.render_id
+        WHERE ra.asset_id = public.content_library_assets.id
+          AND r.state = 'succeeded') AS use_count
 FROM public.content_library_assets
 WHERE status = 'active'
   AND rights_status = ANY(%(rights)s)
@@ -254,6 +263,19 @@ def score_candidate(row, brief: VideoBrief, slot: Slot, used_places, used_subcat
     quality = row.get("quality_score")
     if quality:
         score += float(quality) * 3
+
+    # Rotation across renders. Two exterior shots of one restaurant are a
+    # mistake inside a single video and an asset across a series of them —
+    # this is what gives the second one its turn, so a run of variations
+    # does not keep reaching for the same clip.
+    #
+    # It does mean selection depends on render history, so the same brief
+    # can yield a different edit next week. The recipe still records exactly
+    # what was chosen, which is the property that matters; set
+    # prefer_unused=false for a strictly repeatable edit.
+    if brief.prefer_unused:
+        uses = row.get("use_count") or 0
+        score += 12 if uses == 0 else -min(12, uses * 4)
 
     # Variety, penalised rather than forbidden — with a limited library,
     # refusing a repeat outright would fail briefs that could still produce

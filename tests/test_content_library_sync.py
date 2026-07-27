@@ -214,3 +214,38 @@ class TestDatabaseUrlParsing:
     def test_rejects_unsupported_scheme(self):
         with pytest.raises(ValueError):
             sync.parse_database_url("mysql://u:p@host/db")
+
+
+class TestTagParsing:
+    """
+    Tags are entered as free text in the tab, so parsing is the guard
+    against a typo becoming a namespace nobody ever queries again.
+    """
+
+    def _parse(self):
+        import os
+        os.environ.setdefault("DATABASE_URL", "postgresql://u:p@h:5432/d")
+        os.environ.setdefault("MEDIAMIXER_ADMIN_SECRET", "x")
+        from api.main import parse_tags
+        return parse_tags
+
+    def test_namespaced_and_bare_forms(self):
+        parse = self._parse()
+        assert parse("emotion:surprised, hidden-gem") == [
+            ("emotion", "surprised"), ("theme", "hidden-gem")]
+
+    def test_case_and_spacing_are_normalized(self):
+        assert self._parse()("  Theme:Hidden Gem  ") == [("theme", "hidden-gem")]
+
+    def test_duplicates_collapse(self):
+        assert self._parse()("theme:luxury, luxury") == [("theme", "luxury")]
+
+    def test_an_unknown_namespace_is_refused(self):
+        import pytest as _pytest
+        from fastapi import HTTPException
+        with _pytest.raises(HTTPException):
+            self._parse()("emotoin:surprised")
+
+    def test_empty_input_clears_rather_than_erroring(self):
+        parse = self._parse()
+        assert parse("") == [] and parse(None) == []

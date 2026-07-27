@@ -507,3 +507,50 @@ class TestTemplateOrdering:
         assert roles.index("app_demonstration") < roles.index("destination_proof")
         base = [s.role for s in sel.load_template("city-discovery-v1").slots]
         assert base.index("app_demonstration") > base.index("destination_proof")
+
+
+class TestRotationAcrossRenders:
+    """
+    An alternate shot of the same place exists so a run of variations can
+    differ. Within one video the pair is a mistake; across a series it is
+    the point.
+    """
+
+    def test_an_unused_clip_outranks_one_already_in_a_video(self):
+        slot = sel.Slot("x", ["broll"], 2000, 2500, 3000)
+        brief = sel.VideoBrief()
+        fresh = asset(1, "broll", use_count=0)
+        used = asset(2, "broll", use_count=2)
+        assert sel.score_candidate(fresh, brief, slot, set(), set(), set()) > \
+               sel.score_candidate(used, brief, slot, set(), set(), set())
+
+    def test_heavier_use_ranks_lower_still(self):
+        slot = sel.Slot("x", ["broll"], 2000, 2500, 3000)
+        brief = sel.VideoBrief()
+        once = sel.score_candidate(asset(1, "broll", use_count=1), brief, slot,
+                                   set(), set(), set())
+        often = sel.score_candidate(asset(2, "broll", use_count=5), brief, slot,
+                                    set(), set(), set())
+        assert often < once
+
+    def test_rotation_can_be_turned_off_for_a_repeatable_edit(self):
+        slot = sel.Slot("x", ["broll"], 2000, 2500, 3000)
+        brief = sel.VideoBrief(prefer_unused=False)
+        fresh = asset(1, "broll", use_count=0)
+        used = asset(2, "broll", use_count=9)
+        assert sel.score_candidate(fresh, brief, slot, set(), set(), set()) == \
+               sel.score_candidate(used, brief, slot, set(), set(), set())
+
+    def test_topic_still_outranks_novelty(self):
+        # A fresh clip of the wrong subject must not beat a used clip of the
+        # right one — rotation varies the edit, it does not redefine it.
+        slot = sel.Slot("x", ["broll"], 2000, 2500, 3000, prefer_topic_match=True)
+        brief = sel.VideoBrief(topic="pizza")
+        on_topic_used = asset(1, "broll", subcategory="pizza", use_count=2)
+        off_topic_fresh = asset(2, "broll", subcategory="watches", use_count=0)
+        assert sel.score_candidate(on_topic_used, brief, slot, set(), set(), set()) > \
+               sel.score_candidate(off_topic_fresh, brief, slot, set(), set(), set())
+
+    def test_the_default_is_on(self):
+        assert sel.VideoBrief().prefer_unused is True
+        assert sel.VideoBrief.from_dict({}).prefer_unused is True

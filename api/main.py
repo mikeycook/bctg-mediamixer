@@ -143,10 +143,23 @@ def list_content_library(hook: Optional[str] = Query(None),
         db, f"SELECT * FROM public.content_library_assets{where} ORDER BY s3_key",
         params or None)
 
+    tag_rows = _rows_as_dicts(db, """
+        SELECT at.asset_id, t.namespace, t.slug, at.provenance
+        FROM public.content_library_asset_tags at
+        JOIN public.content_library_tags t ON t.id = at.tag_id
+        ORDER BY t.namespace, t.slug
+    """)
+    tags_by_asset = {}
+    for tag in tag_rows:
+        tags_by_asset.setdefault(tag["asset_id"], []).append(
+            {"label": f"{tag['namespace']}:{tag['slug']}",
+             "provenance": tag["provenance"]})
+
     out = []
     for row in rows:
         row["created_at"] = str(row.get("created_at") or "")
         row["updated_at"] = str(row.get("updated_at") or "")
+        row["tags"] = tags_by_asset.get(row["id"], [])
         try:
             row["preview_url"] = _s3.presign(row["s3_key"])
         except Exception:
@@ -205,6 +218,85 @@ def sync_content_library(db=Depends(get_db), _=Depends(require_secret)):
     return {"added": added, "durations": 0, "listed": len(objects)}
 
 
+# Namespaces a reviewer may write. `emotion` is included so a wrong
+# folder-derived tag can be corrected; the others come from the controlled
+# vocabularies in 04-asset-standards.md.
+_TAG_NAMESPACES = ("emotion", "theme", "mood", "visual", "audience", "compatibility")
+
+
+def parse_tags(value):
+    """
+    Accepts "emotion:surprised, theme:hidden-gem" or a list of the same.
+
+    A bare slug is read as `theme`, which is where most descriptive tags
+    belong. Unknown namespaces are rejected rather than silently created,
+    since a typo would otherwise become a namespace nobody ever queries.
+    """
+    if value is None:
+        return []
+    items = value if isinstance(value, list) else str(value).split(",")
+    parsed = []
+    for item in items:
+        text = str(item).strip().lower()
+        if not text:
+            continue
+        namespace, _, slug = text.partition(":")
+        if not slug:
+            namespace, slug = "theme", namespace
+        slug = re.sub(r"[^a-z0-9]+", "-", slug).strip("-")
+        if not slug:
+            continue
+        if namespace not in _TAG_NAMESPACES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"unknown tag namespace {namespace!r}; "
+                       f"use one of {', '.join(_TAG_NAMESPACES)}")
+        if (namespace, slug) not in parsed:
+            parsed.append((namespace, slug))
+    return parsed
+
+
+def replace_tags(db, asset_pk, tags):
+    """
+    Replaces an asset's tags wholesale, marking them provenance 'human'.
+
+    Wholesale rather than additive because removal has to be expressible —
+    the reason for having this at all is correcting a wrong folder-derived
+    emotion. The 'human' provenance is what stops the next sync putting it
+    straight back.
+    """
+    db.execute_query(
+        "DELETE FROM public.content_library_asset_tags WHERE asset_id = %s",
+        (asset_pk,))
+    for namespace, slug in tags:
+        db.execute_query("""
+            INSERT INTO public.content_library_tags (namespace, slug, display_name)
+            VALUES (%s, %s, initcap(replace(%s, '-', ' ')))
+            ON CONFLICT (namespace, slug) DO NOTHING
+        """, (namespace, slug, slug))
+        db.execute_query("""
+            INSERT INTO public.content_library_asset_tags
+                (asset_id, tag_id, provenance, reviewed_at)
+            SELECT %s, id, 'human', now() FROM public.content_library_tags
+            WHERE namespace = %s AND slug = %s
+            ON CONFLICT (asset_id, tag_id) DO UPDATE SET provenance = 'human'
+        """, (asset_pk, namespace, slug))
+
+
+@app.get("/admin/tags")
+def list_tags(db=Depends(get_db), _=Depends(require_secret)):
+    """Every tag in use, for autocomplete."""
+    rows = _rows_as_dicts(db, """
+        SELECT t.namespace, t.slug, count(at.asset_id) AS assets
+        FROM public.content_library_tags t
+        LEFT JOIN public.content_library_asset_tags at ON at.tag_id = t.id
+        GROUP BY t.namespace, t.slug ORDER BY t.namespace, t.slug
+    """)
+    return {"tags": [{"label": f"{r['namespace']}:{r['slug']}",
+                      "assets": r["assets"]} for r in rows],
+            "namespaces": list(_TAG_NAMESPACES)}
+
+
 class ContentLibraryUpdate(BaseModel):
     values: Dict[str, Any]
 
@@ -212,6 +304,9 @@ class ContentLibraryUpdate(BaseModel):
 @app.put("/admin/content-library/{asset_pk}")
 def update_content_library(asset_pk: int, body: ContentLibraryUpdate,
                            db=Depends(get_db), _=Depends(require_secret)):
+    if "tags" in body.values:
+        replace_tags(db, asset_pk, parse_tags(body.values["tags"]))
+
     values = {k: v for k, v in body.values.items() if k in _EDITABLE}
     if not values:
         return {"ok": True}

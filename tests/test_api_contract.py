@@ -59,6 +59,8 @@ class TestPathsMatchTheAdminUi:
             "/admin/renders",
             "/admin/renders/preview",
             "/admin/renders/{render_id}",
+            # Tags
+            "/admin/tags",
         }
 
     def test_there_is_no_way_to_edit_a_recipe(self):

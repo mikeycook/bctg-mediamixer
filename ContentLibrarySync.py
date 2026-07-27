@@ -331,6 +331,12 @@ def merge_emotion_tags(db, emotions_by_key, bucket):
     """
     Unions every folder-derived emotion onto the canonical asset, so a
     query for either emotion finds the one performance.
+
+    Assets whose emotions a reviewer has curated are left alone. Folder
+    names are a proposal, and once someone has corrected one — removed a
+    wrong emotion, added one the folder does not imply — re-deriving from
+    the path every night would silently undo it. Provenance is what tells
+    the two apart.
     """
     if not emotions_by_key:
         return 0
@@ -344,6 +350,15 @@ def merge_emotion_tags(db, emotions_by_key, bucket):
         if not rows:
             continue
         canonical_id = rows[0][0]
+
+        curated = db.execute_query("""
+            SELECT 1 FROM public.content_library_asset_tags at
+            JOIN public.content_library_tags t ON t.id = at.tag_id
+            WHERE at.asset_id = %s AND t.namespace = 'emotion'
+              AND at.provenance = 'human' LIMIT 1
+        """, (canonical_id,))
+        if curated:
+            continue
         for emotion in emotions:
             execute_returning(db, """
                 INSERT INTO public.content_library_tags (namespace, slug, display_name)
