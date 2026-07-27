@@ -1,0 +1,47 @@
+[Unit]
+Description=MediaMixer render worker (one render per invocation)
+Documentation=https://github.com/mikeycook/bctg-mediamixer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/mediamixer/app
+
+# See mediamixer-api.service: ProtectHome=true makes libpq's probe for
+# $HOME/.postgresql/postgresql.crt fail with EACCES, which downgrades the
+# connection to plaintext and gets it refused by RDS.
+Environment=HOME=/opt/mediamixer
+
+EnvironmentFile=/etc/mediamixer/mediamixer.env
+
+# Invoked with the brief as an override, e.g.
+#   sudo systemctl set-environment MM_BRIEF='{"cityid":"CIT-...","topic":"pizza"}'
+#   sudo systemctl start mediamixer-render
+# For ad-hoc renders, running RenderWorker.py directly is simpler.
+ExecStart=/opt/mediamixer/venv/bin/python RenderWorker.py --brief ${MM_BRIEF} \
+    --environment dev
+
+# An encode can take minutes; being killed part way leaves a failed render
+# and a stale scratch directory, both recoverable, but not worth causing.
+TimeoutStartSec=3600
+Nice=10
+IOSchedulingClass=idle
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/mediamixer
+
+# ProtectSystem=strict makes the whole tree read-only, including the
+# scratch mount, despite it being chowned to ubuntu. Without this the
+# render fails on a permission error pointing at a directory that looks
+# perfectly writable. The API and sync units do not need it because
+# neither writes to disk.
+ReadWritePaths=/opt/mediamixer/scratch
+
+[Install]
+WantedBy=multi-user.target

@@ -140,29 +140,23 @@ validation are all built and tested (225 tests); what remains is
 infrastructure, the review pass, and the worker that ties the render
 pieces together.
 
-**Step 1 — install the AWS CLI on the workstation.** Everything below
-starts here, because server 3's instance role deliberately cannot inspect
-or change AWS configuration; those commands must run from the laptop.
+**Steps 1–3 are done.** The workstation has the AWS CLI authenticated as
+`user/krustycook` (an IAM user with AdministratorAccess and MFA, replacing
+day-to-day root use; root retains MFA and holds no access keys). Bucket
+versioning is enabled on `big-city-travel-guide-clips`, with a lifecycle
+rule aborting incomplete multipart uploads after 7 days. Noncurrent
+versions are deliberately *not* expired: they only appear if something
+overwrote a master, which IAM already denies, so their existence would be
+a signal worth keeping rather than storage worth reclaiming.
 
-```bash
-curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o AWSCLIV2.pkg
-sudo installer -pkg AWSCLIV2.pkg -target /
-aws --version
-aws configure          # correct HERE — and never on server 3, which uses its role
-```
+Scratch is a separate 20 GB gp3 volume (`vol-071c535cf672f5c8d`) mounted
+at `/opt/mediamixer/scratch` by label, owned by `ubuntu`.
 
-Note the asymmetry: `aws configure` writes static credentials, which is
-right on a laptop with no instance role and wrong on server 3, where it
-would defeat the role entirely.
-
-**Step 2 — bucket versioning** (workstation). See §8 of
-`docs/ai-media-generation/10-ec2-server3-setup.md`. Check, enable if off,
-add a lifecycle rule expiring noncurrent versions after ~90 days. Not
-retroactive, so sooner is better.
-
-**Step 3 — scratch volume** (§6 of the same doc). `create-volume` and
-`attach-volume` from the workstation; `mkfs`, `mount` and the fstab entry
-on server 3. 20 GB gp3 in `us-east-1c`. Mount by label, not device name.
+Note the credential asymmetry, since it reads as a contradiction: `aws
+configure` is correct on the workstation, which has no instance role, and
+wrong on server 3, where it would defeat the role entirely. Anything that
+inspects or changes AWS configuration runs from the workstation; server 3
+only reads media and writes exports.
 
 **Step 4 — the review pass.** Nothing renders until assets are `active`.
 Filter the tab to "Canonical only", confirm tagging, activate in batches.
