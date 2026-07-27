@@ -1,0 +1,9 @@
+{
+  "cityid": "CIT-00000000002",
+  "topic": "tacos",
+  "template_id": "city-discovery-v1",
+  "target_duration_ms": 20000,
+  "platforms": ["instagram-reels"],
+  "environment": "dev",
+  "seed": "ny-tacos-001"
+}

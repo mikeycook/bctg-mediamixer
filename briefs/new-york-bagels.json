@@ -1,0 +1,9 @@
+{
+  "cityid": "CIT-00000000002",
+  "topic": "bagels",
+  "template_id": "city-discovery-v1",
+  "target_duration_ms": 20000,
+  "platforms": ["instagram-reels"],
+  "environment": "dev",
+  "seed": "ny-bagels-001"
+}

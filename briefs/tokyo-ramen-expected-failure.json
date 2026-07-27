@@ -1,0 +1,10 @@
+{
+  "_comment": "This brief is SUPPOSED to fail. Tokyo has app recordings but no Tokyo B-roll, so it must return insufficient_assets rather than filling the visual slots with New York restaurants. Run it alongside the New York briefs — a pass here would mean the city guard is broken, which is worth more than any of the successes. Replace CIT-TOKYO with the real Tokyo cityid from cities_reference.",
+  "cityid": "CIT-TOKYO",
+  "topic": "ramen",
+  "template_id": "city-discovery-v1",
+  "target_duration_ms": 20000,
+  "platforms": ["instagram-reels"],
+  "environment": "dev",
+  "seed": "tokyo-ramen-001"
+}
