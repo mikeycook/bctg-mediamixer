@@ -200,21 +200,26 @@ def fit_caption(text, canvas, style):
     Chooses a font size and line breaks so the text stays inside the frame.
 
     drawtext neither wraps nor shrinks on its own, so both are decided here.
-    The usable width is the frame minus the side safe margins; the box border
-    eats into it too, and it scales with the font, so it is part of the
-    budget. Wrap to that width, and if the widest line still would not fit —
-    a place name longer than the column, which wrap_text leaves whole rather
-    than chop — step the size down until it does. Returns (font_px, lines).
+    The size steps down until the whole caption fits two ways: no line wider
+    than the usable width (frame minus the side margins and the scaling box
+    border), and no more lines than the style allows. The second is what keeps
+    a long hook — "THE FASTEST way to find the BEST NYC PIZZA" — from losing
+    its last word to truncation: it shrinks to fit rather than dropping
+    "PIZZA". Only at the font floor, with nowhere left to shrink, is an
+    over-long caption clipped. Returns (font_px, lines).
     """
     usable = canvas["width"] * (1 - 2 * SAFE_SIDE)
+    max_lines = style["max_lines"]
     font_px = max(12, int(canvas["height"] * style["font_size_ratio"]))
     while True:
         border = int(font_px * 0.35)
         avail = max(1.0, usable - 2 * border)
         max_chars = max(4, int(avail / (font_px * CHAR_WIDTH_RATIO)))
-        lines = wrap_text(text, max_chars)[: style["max_lines"]]
-        if _widest_line_px(lines, font_px) + 2 * border <= usable or font_px <= 12:
-            return font_px, lines
+        lines = wrap_text(text, max_chars)
+        fits_width = _widest_line_px(lines, font_px) + 2 * border <= usable
+        fits_lines = len(lines) <= max_lines
+        if (fits_width and fits_lines) or font_px <= 12:
+            return font_px, lines[:max_lines]
         font_px = max(12, int(font_px * 0.92))
 
 

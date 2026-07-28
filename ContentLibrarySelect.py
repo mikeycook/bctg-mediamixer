@@ -736,6 +736,11 @@ def select(db, brief: VideoBrief, template_dir=TEMPLATE_DIR):
     if suppress_cta_caption:
         recipe["caption_specs"] = [c for c in recipe.get("caption_specs", [])
                                    if c.get("role") != "cta"]
+    elif brief.with_endcard:
+        # Asked for but nothing qualified — surface it rather than closing on
+        # the generic clip silently. The usual cause is an unprobed card
+        # (no duration yet), or one not active / owned / city_agnostic.
+        recipe["endcard_unavailable"] = True
     if brief.with_music:
         track = choose_music(db, brief, rng)
         if track:
