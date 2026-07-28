@@ -28,7 +28,8 @@
       "max_ms": 8000,
       "required": true,
       "prefer_topic_match": true,
-      "notes": "The feature moment (e.g. live tracking). No neighborhood match: app clips are not geographic."
+      "match_feature": true,
+      "notes": "The feature moment. match_feature scopes it to the brief's feature (subtype), e.g. live-tracking. No neighborhood match: app clips are not geographic."
     },
     {
       "role": "supporting_visual",

@@ -49,8 +49,11 @@ class FakeDb:
             if "city_slug" in params and not (
                     row.get("city_slug") == params["city_slug"] or row.get("city_agnostic")):
                 continue
-            if "neighborhood" in params and (
-                    (row.get("neighborhood") or "").lower() != params["neighborhood"].lower()):
+            if "neighborhoods" in params and (
+                    (row.get("neighborhood") or "").lower() not in params["neighborhoods"]):
+                continue
+            if "feature" in params and (
+                    (row.get("subtype") or "").lower() != params["feature"].lower()):
                 continue
             out.append(dict(row))
         return out
@@ -781,7 +784,7 @@ class TestNeighborhoodEligibility:
                 asset(3, "broll", neighborhood=None)]
         slot = sel.Slot(role="hook_visual", asset_types=["broll"], min_ms=0,
                         preferred_ms=2500, max_ms=3000, match_neighborhood=True)
-        brief = sel.VideoBrief(cityid="CIT-00000000002", neighborhood="chelsea")
+        brief = sel.VideoBrief(cityid="CIT-00000000002", neighborhoods=("chelsea",))
         got = {c["id"] for c in sel.eligible_candidates(FakeDb(rows), brief, slot)}
         assert got == {1}                     # case-insensitive; SoHo and NULL excluded
 
@@ -790,7 +793,7 @@ class TestNeighborhoodEligibility:
                 asset(2, "broll", neighborhood="SoHo")]
         slot = sel.Slot(role="supporting_visual", asset_types=["broll"], min_ms=0,
                         preferred_ms=4000, max_ms=5000, match_neighborhood=False)
-        brief = sel.VideoBrief(cityid="CIT-00000000002", neighborhood="Chelsea")
+        brief = sel.VideoBrief(cityid="CIT-00000000002", neighborhoods=("Chelsea",))
         got = {c["id"] for c in sel.eligible_candidates(FakeDb(rows), brief, slot)}
         assert got == {1, 2}
 
@@ -820,7 +823,7 @@ class TestNeighborhoodTemplate:
     def test_broll_scopes_to_the_neighborhood_but_app_does_not(self):
         brief = sel.VideoBrief(cityid="CIT-00000000002",
                                template_id="neighborhood-feature-v1",
-                               neighborhood="Chelsea", with_endcard=False, seed="t")
+                               neighborhoods=("Chelsea",), with_endcard=False, seed="t")
         recipe = sel.select(FakeDb(self.library()), brief)
         by_role = {c["role"]: c for c in recipe["timeline"]}
         # Both b-roll slots came from Chelsea; the SoHo clip was never eligible.
@@ -837,7 +840,66 @@ class TestNeighborhoodTemplate:
                 asset(12, "broll", neighborhood="SoHo")]
         brief = sel.VideoBrief(cityid="CIT-00000000002",
                                template_id="neighborhood-feature-v1",
-                               neighborhood="Chelsea", seed="t")
+                               neighborhoods=("Chelsea",), seed="t")
         with pytest.raises(sel.SelectionError) as excinfo:
             sel.select(FakeDb(rows), brief)
         assert "hook_visual" in excinfo.value.diagnostics["unfilled_slots"]
+
+
+class TestMultipleNeighborhoods:
+    def test_a_render_can_span_several_neighborhoods(self):
+        rows = [asset(1, "broll", neighborhood="Chelsea"),
+                asset(2, "broll", neighborhood="SoHo"),
+                asset(3, "broll", neighborhood="Harlem")]
+        slot = sel.Slot(role="hook_visual", asset_types=["broll"], min_ms=0,
+                        preferred_ms=2500, max_ms=3000, match_neighborhood=True)
+        brief = sel.VideoBrief(cityid="CIT-00000000002",
+                               neighborhoods=("chelsea", "soho"))
+        got = {c["id"] for c in sel.eligible_candidates(FakeDb(rows), brief, slot)}
+        assert got == {1, 2}                       # Harlem excluded
+
+    def test_from_dict_parses_a_comma_separated_string(self):
+        brief = sel.VideoBrief.from_dict({"neighborhood": "Chelsea, SoHo , chelsea"})
+        assert brief.neighborhoods == ("Chelsea", "SoHo")   # trimmed, deduped
+
+    def test_from_dict_accepts_a_list(self):
+        brief = sel.VideoBrief.from_dict({"neighborhoods": ["Chelsea", "SoHo"]})
+        assert brief.neighborhoods == ("Chelsea", "SoHo")
+
+
+class TestFeatureTargeting:
+    def test_match_feature_slot_scopes_to_the_brief_feature(self):
+        rows = [asset(1, "app", subtype="live-tracking"),
+                asset(2, "app", subtype="pizza-map")]
+        slot = sel.Slot(role="app_demonstration", asset_types=["app"], min_ms=0,
+                        preferred_ms=6500, max_ms=8000, match_feature=True)
+        brief = sel.VideoBrief(cityid="CIT-00000000002", feature="Live-Tracking")
+        got = {c["id"] for c in sel.eligible_candidates(FakeDb(rows), brief, slot)}
+        assert got == {1}                          # case-insensitive; pizza-map excluded
+
+    def test_a_slot_that_does_not_opt_in_ignores_the_feature(self):
+        rows = [asset(1, "app", subtype="live-tracking"),
+                asset(2, "app", subtype="pizza-map")]
+        slot = sel.Slot(role="app_demonstration", asset_types=["app"], min_ms=0,
+                        preferred_ms=6500, max_ms=8000, match_feature=False)
+        brief = sel.VideoBrief(cityid="CIT-00000000002", feature="live-tracking")
+        got = {c["id"] for c in sel.eligible_candidates(FakeDb(rows), brief, slot)}
+        assert got == {1, 2}
+
+    def test_feature_and_neighborhood_scope_the_right_slots(self):
+        # The app slot scopes to the feature; the b-roll slots to the
+        # neighborhood; neither constrains the other.
+        rows = [asset(1, "app", subtype="live-tracking"),
+                asset(2, "app", subtype="pizza-map"),
+                asset(10, "broll", neighborhood="Chelsea", place_name="A", subcategory="tacos"),
+                asset(11, "broll", neighborhood="Chelsea", place_name="B", subcategory="tacos"),
+                asset(12, "broll", neighborhood="SoHo", place_name="C", subcategory="tacos")]
+        brief = sel.VideoBrief(cityid="CIT-00000000002",
+                               template_id="neighborhood-feature-v1",
+                               neighborhoods=("Chelsea",), feature="live-tracking",
+                               with_endcard=False, seed="t")
+        recipe = sel.select(FakeDb(rows), brief)
+        by_role = {c["role"]: c for c in recipe["timeline"]}
+        assert by_role["app_demonstration"]["asset_id"] == "UGC-00001"   # live-tracking
+        assert by_role["hook_visual"]["asset_id"] in {"UGC-00010", "UGC-00011"}
+        assert by_role["supporting_visual"]["asset_id"] in {"UGC-00010", "UGC-00011"}

@@ -58,6 +58,27 @@ class SelectionError(Exception):
                 "diagnostics": self.diagnostics}
 
 
+def _brief_neighborhoods(data):
+    """
+    A brief may name several neighborhoods — a render can span Chelsea and
+    SoHo. Accepts a list, or a comma-separated string from the tab's single
+    input. Deduplicated case-insensitively, order preserved.
+    """
+    raw = data.get("neighborhoods")
+    if raw is None:
+        raw = data.get("neighborhood")
+    if raw is None:
+        return ()
+    items = raw if isinstance(raw, (list, tuple)) else str(raw).split(",")
+    seen, out = set(), []
+    for item in items:
+        value = str(item).strip()
+        if value and value.lower() not in seen:
+            seen.add(value.lower())
+            out.append(value)
+    return tuple(out)
+
+
 @dataclass(frozen=True)
 class VideoBrief:  # noqa: D101
     cityid: Optional[str] = None
@@ -65,8 +86,11 @@ class VideoBrief:  # noqa: D101
     topic: Optional[str] = None
     # Scope a render below the city. Applies to slots that opt in with
     # match_neighborhood; other slots (the app feature, the brand card) ignore
-    # it, so a neighborhood video still carries its non-geographic pieces.
-    neighborhood: Optional[str] = None
+    # it. Several may be requested — a render can span Chelsea and SoHo.
+    neighborhoods: Tuple[str, ...] = ()
+    # Target a specific app feature (stored in subtype), e.g. live-tracking vs
+    # pizza-map. Applies to slots that opt in with match_feature.
+    feature: Optional[str] = None
     template_id: str = "city-discovery-v1"
     target_duration_ms: int = 20000
     platforms: Tuple[str, ...] = ("instagram-reels",)
@@ -102,7 +126,8 @@ class VideoBrief:  # noqa: D101
             cityid=data.get("cityid") or data.get("city_id"),
             city_slug=data.get("city_slug"),
             topic=data.get("topic"),
-            neighborhood=(data.get("neighborhood") or None),
+            neighborhoods=_brief_neighborhoods(data),
+            feature=(data.get("feature") or None),
             template_id=data.get("template_id", "city-discovery-v1"),
             target_duration_ms=int(data.get("target_duration_ms", 20000)),
             platforms=tuple(data.get("platforms", ("instagram-reels",))),
@@ -137,11 +162,15 @@ class Slot:
     # When true and the brief carries a mood, restrict this slot to assets
     # tagged with that emotion.
     match_mood: bool = False
-    # When true and the brief carries a neighborhood, restrict this slot to
-    # clips in it — a hard geographic filter, for feature videos scoped below
-    # the city. Set on the geographic (b-roll) slots of a neighborhood
+    # When true and the brief carries neighborhoods, restrict this slot to
+    # clips in them — a hard geographic filter, for feature videos scoped
+    # below the city. Set on the geographic (b-roll) slots of a neighborhood
     # template; left off on app and cta slots, which have no neighborhood.
     match_neighborhood: bool = False
+    # When true and the brief names a feature, restrict this slot to app clips
+    # whose subtype is that feature — so a "live tracking" video uses the
+    # live-tracking clip, not the pizza-map one. Set on the app slot.
+    match_feature: bool = False
     # Emotions this slot accepts, independent of the brief. Set when a
     # template wants a specific arc — intrigue early, delight later — which
     # a single brief-level mood cannot express. Takes precedence over
@@ -250,9 +279,13 @@ def eligible_candidates(db, brief: VideoBrief, slot: Slot):
                 AND t.namespace = 'emotion' AND t.slug = %(mood)s)"""
         params["mood"] = brief.mood.strip().lower()
 
-    if slot.match_neighborhood and brief.neighborhood:
-        sql += " AND lower(neighborhood) = lower(%(neighborhood)s)"
-        params["neighborhood"] = brief.neighborhood.strip()
+    if slot.match_neighborhood and brief.neighborhoods:
+        sql += " AND lower(neighborhood) = ANY(%(neighborhoods)s)"
+        params["neighborhoods"] = [n.lower() for n in brief.neighborhoods]
+
+    if slot.match_feature and brief.feature:
+        sql += " AND lower(subtype) = lower(%(feature)s)"
+        params["feature"] = brief.feature.strip()
 
     rows = db.execute_query_as_dict(sql, params)
     rows = rows if isinstance(rows, list) else []
