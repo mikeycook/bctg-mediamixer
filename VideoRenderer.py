@@ -219,11 +219,19 @@ def build_ffmpeg_command(recipe, input_paths, output_path, ffmpeg="ffmpeg",
     args += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
 
     # Music bed, if any. -stream_loop -1 loops a track shorter than the video;
-    # amix duration=first trims a longer one. Added after the clips and the
+    # -t caps the loop at the timeline length. The cap is essential: without
+    # it the infinite loop keeps producing audio after the video (and amix,
+    # duration=first) have ended, and ffmpeg dies trying to inject those
+    # leftover frames — "Failed to inject frame into filter network", exit 234,
+    # after the output was already written. Added after the clips and the
     # silence source, so its filter index is len(timeline) + 1.
     music = None
     if music_path:
-        args += ["-stream_loop", "-1", "-i", music_path]
+        total_s = (recipe.get("total_duration_ms") or 0) / 1000.0
+        args += ["-stream_loop", "-1"]
+        if total_s > 0:
+            args += ["-t", f"{total_s:.3f}"]
+        args += ["-i", music_path]
         music = {
             "index": len(timeline) + 1,
             "gain": (music_mix or {}).get("gain", 0.85),

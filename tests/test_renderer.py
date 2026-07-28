@@ -178,6 +178,18 @@ class TestMusicCommand:
         assert args.index("anullsrc=channel_layout=stereo:sample_rate=48000") < args.index("/bed.mp3")
         assert "[3:a]aresample=48000" in " ".join(args)
 
+    def test_looped_bed_is_capped_at_the_timeline_length(self):
+        # Without the cap, the infinite loop injects frames past the end and
+        # ffmpeg exits 234. The recipe's two clips total 8.0s.
+        args = vr.build_ffmpeg_command(recipe(), ["/a.mov", "/b.mov"], "/out.mp4",
+                                       music_path="/bed.mp3")
+        bed_i = args.index("/bed.mp3")
+        # ... -stream_loop -1 -t 8.000 -i /bed.mp3
+        assert args[bed_i - 1] == "-i"
+        assert args[bed_i - 2] == "8.000"
+        assert args[bed_i - 3] == "-t"
+        assert args.index("-stream_loop") < bed_i - 3
+
     def test_without_a_bed_no_loop_and_no_mix(self):
         args = vr.build_ffmpeg_command(recipe(), ["/a.mov", "/b.mov"], "/out.mp4")
         assert "-stream_loop" not in args
