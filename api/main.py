@@ -64,6 +64,11 @@ _SYNC_PROBE_TIMEOUT = int(os.getenv("SYNC_PROBE_TIMEOUT", "60"))
 # is running.
 _MAX_INFLIGHT_RENDERS = int(os.getenv("MAX_INFLIGHT_RENDERS", "3"))
 
+# An in-flight render older than this had its worker die before finishing
+# (a crash or OOM); it is reaped so it stops counting against the guard.
+# Comfortably longer than a real encode, which takes a couple of minutes.
+_RENDER_STALE_MINUTES = int(os.getenv("RENDER_STALE_MINUTES", "20"))
+
 # Columns a reviewer may write. The governance fields are here so an asset
 # can be activated through the tab that already exists, rather than needing
 # new UI before anything can become eligible.
@@ -817,6 +822,19 @@ def start_render(body: BriefBody, db=Depends(get_db), _=Depends(require_secret))
     here with a useful message instead of appearing to start and then dying
     in a log the operator never sees.
     """
+    # Reap orphaned renders whose worker died before finishing (a crash or the
+    # OOM killer). Left alone they sit in 'rendering' forever and, because the
+    # guard below counts them, block every new render. Self-healing, so a crash
+    # never requires a manual cleanup.
+    db.execute_query(
+        "UPDATE public.content_library_renders "
+        "SET state='failed', error_code='orphaned', "
+        "    error_detail='worker did not finish (likely terminated); reaped', "
+        "    completed_at=now(), updated_at=now() "
+        "WHERE state IN ('planned','queued','rendering','validating') "
+        "  AND created_at < now() - make_interval(mins => %(mins)s)",
+        {"mins": _RENDER_STALE_MINUTES})
+
     # Refuse to pile on when renders are already in flight. Encodes run one at
     # a time (the worker takes a lock) and each peaks around 2 GB, so a burst
     # of clicks would otherwise queue a stack of workers and, historically,
