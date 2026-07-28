@@ -253,8 +253,14 @@ def build_ffmpeg_command(recipe, input_paths, output_path, ffmpeg="ffmpeg",
         "-r", str(recipe["canvas"]["fps"]),
         "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
         "-movflags", "+faststart",
-        output_path,
     ]
+    # With a music bed, end the whole output when the shortest stream ends.
+    # Belt-and-suspenders with the input -t cap: between them the looped bed
+    # cannot outlive the video and leave frames to inject into a finished
+    # graph ("Failed to inject frame into filter network", exit 234).
+    if music:
+        args.append("-shortest")
+    args.append(output_path)
     return args
 
 

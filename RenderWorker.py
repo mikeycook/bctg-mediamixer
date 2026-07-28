@@ -343,16 +343,16 @@ def render_artifacts(recipe, input_paths, workdir, ffmpeg="ffmpeg", timeout=1800
                      drawtext_clauses=None, music_path=None, music_mix=None):
     """Produces final.mp4, preview.mp4 and thumbnail.jpg locally."""
     final = os.path.join(workdir, "final.mp4")
-    code, stderr = vr.run_ffmpeg(
-        vr.build_ffmpeg_command(recipe, input_paths, final, ffmpeg=ffmpeg,
-                                drawtext_clauses=drawtext_clauses,
-                                music_path=music_path, music_mix=music_mix),
-        timeout=timeout)
+    cmd = vr.build_ffmpeg_command(recipe, input_paths, final, ffmpeg=ffmpeg,
+                                  drawtext_clauses=drawtext_clauses,
+                                  music_path=music_path, music_mix=music_mix)
+    code, stderr = vr.run_ffmpeg(cmd, timeout=timeout)
     if code != 0 or not os.path.exists(final):
-        # Print the whole thing so journalctl has it, and raise with the lines
-        # that actually explain the failure — ffmpeg's last 800 chars are
-        # usually libx264's encode statistics, not the error.
-        print(f"[FFMPEG] failed ({code}); full stderr follows:\n{stderr}")
+        # Log the exact command (so we can see -t / -shortest / which inputs)
+        # and the full stderr for journalctl, then raise with the lines that
+        # actually explain it — ffmpeg's tail is usually libx264 statistics.
+        print(f"[FFMPEG] failed ({code}); command:\n{' '.join(cmd)}\n"
+              f"full stderr follows:\n{stderr}")
         raise RenderFailure("render_failed", _ffmpeg_error(code, stderr))
 
     made = [("final", final, "video/mp4")]
