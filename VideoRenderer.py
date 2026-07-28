@@ -215,19 +215,23 @@ def build_ffmpeg_command(recipe, input_paths, output_path, ffmpeg="ffmpeg",
         take = (clip["source_out_ms"] - clip["source_in_ms"]) / 1000.0
         args += ["-ss", f"{start:.3f}", "-t", f"{take:.3f}", "-i", path]
 
-    # Silence source for clips with no audio track, referenced by the graph.
-    args += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
+    total_s = (recipe.get("total_duration_ms") or 0) / 1000.0
+
+    # Silence source for clips with no audio track (screen recordings are
+    # silent). anullsrc is infinite, so — exactly like the looped music — it
+    # must be capped with -t, or it keeps producing silence after the output
+    # is done and ffmpeg dies injecting the leftover frames ("Failed to inject
+    # frame into filter network", exit 234, after the file is written).
+    args += ["-f", "lavfi"]
+    if total_s > 0:
+        args += ["-t", f"{total_s:.3f}"]
+    args += ["-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
 
     # Music bed, if any. -stream_loop -1 loops a track shorter than the video;
-    # -t caps the loop at the timeline length. The cap is essential: without
-    # it the infinite loop keeps producing audio after the video (and amix,
-    # duration=first) have ended, and ffmpeg dies trying to inject those
-    # leftover frames — "Failed to inject frame into filter network", exit 234,
-    # after the output was already written. Added after the clips and the
-    # silence source, so its filter index is len(timeline) + 1.
+    # -t caps the loop at the timeline length, for the same reason. Added
+    # after the clips and the silence source, so its index is len(timeline)+1.
     music = None
     if music_path:
-        total_s = (recipe.get("total_duration_ms") or 0) / 1000.0
         args += ["-stream_loop", "-1"]
         if total_s > 0:
             args += ["-t", f"{total_s:.3f}"]

@@ -195,6 +195,15 @@ class TestMusicCommand:
         assert "-stream_loop" not in args
         assert "amix" not in " ".join(args)
 
+    def test_silence_source_is_capped_at_the_timeline_length(self):
+        # anullsrc is infinite; without -t it injects frames past the end and
+        # ffmpeg exits 234 whenever a clip is silent. Applies with no music.
+        args = vr.build_ffmpeg_command(recipe(), ["/a.mov", "/b.mov"], "/out.mp4")
+        si = args.index("anullsrc=channel_layout=stereo:sample_rate=48000")
+        assert args[si - 1] == "-i"
+        assert args[si - 2] == "8.000"
+        assert args[si - 3] == "-t"
+
 
 class TestRenderId:
     def test_prefix_and_length(self):
