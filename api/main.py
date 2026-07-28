@@ -59,6 +59,11 @@ _s3 = S3Interpreter(_BUCKET, region=_REGION)
 _SYNC_PROBE_LIMIT = int(os.getenv("SYNC_PROBE_LIMIT", "12"))
 _SYNC_PROBE_TIMEOUT = int(os.getenv("SYNC_PROBE_TIMEOUT", "60"))
 
+# Most renders allowed in flight at once. The worker also serializes encodes
+# with a lock, so this only bounds how many can queue up behind the one that
+# is running.
+_MAX_INFLIGHT_RENDERS = int(os.getenv("MAX_INFLIGHT_RENDERS", "3"))
+
 # Columns a reviewer may write. The governance fields are here so an asset
 # can be activated through the tab that already exists, rather than needing
 # new UI before anything can become eligible.
@@ -812,6 +817,21 @@ def start_render(body: BriefBody, db=Depends(get_db), _=Depends(require_secret))
     here with a useful message instead of appearing to start and then dying
     in a log the operator never sees.
     """
+    # Refuse to pile on when renders are already in flight. Encodes run one at
+    # a time (the worker takes a lock) and each peaks around 2 GB, so a burst
+    # of clicks would otherwise queue a stack of workers and, historically,
+    # exhaust the box. Best-effort: the worker's own lock is the hard guarantee.
+    inflight = db.execute_query(
+        "SELECT count(*) FROM public.content_library_renders "
+        "WHERE state IN ('planned','queued','rendering','validating')")
+    running = inflight[0][0] if inflight else 0
+    if running >= _MAX_INFLIGHT_RENDERS:
+        raise HTTPException(
+            status_code=429,
+            detail=f"{running} render(s) already in progress. Encodes run one "
+                   f"at a time and are memory-heavy — wait for them to finish "
+                   f"before starting more.")
+
     brief = _brief_from(body.brief)
     try:
         clselect.select(db, brief)

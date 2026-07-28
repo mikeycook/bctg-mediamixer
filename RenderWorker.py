@@ -37,6 +37,7 @@ Env (from the systemd EnvironmentFile in the .service, or ./.env locally):
 """
 
 import argparse
+import fcntl
 import json
 import os
 import shutil
@@ -479,6 +480,30 @@ def run(db, s3, exporter, brief, environment, scratch_root, ffmpeg="ffmpeg",
             shutil.rmtree(workdir, ignore_errors=True)
 
 
+_RENDER_LOCK_PATH = os.getenv(
+    "RENDER_LOCK", os.path.join(DEFAULT_SCRATCH, ".render.lock"))
+
+
+def acquire_render_slot(path=_RENDER_LOCK_PATH):
+    """
+    Serialize encodes across processes so several at once cannot exhaust the
+    box's memory (an encode peaks around 2 GB). A blocking exclusive flock:
+    workers spawned together queue and run one at a time. The lock is released
+    automatically if a worker dies, so a crash never wedges the queue. Returns
+    the open file object, which the caller must keep referenced for the lock
+    to hold.
+    """
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+    except OSError:
+        pass
+    handle = open(path, "w")
+    print("[LOCK] waiting for a render slot…")
+    fcntl.flock(handle, fcntl.LOCK_EX)
+    print("[LOCK] acquired")
+    return handle
+
+
 def main():
     ap = argparse.ArgumentParser(description="Render one video from a brief.")
     source = ap.add_mutually_exclusive_group(required=True)
@@ -525,6 +550,8 @@ def main():
             print("Would be rendered. No files were written and no rows changed.")
             return
 
+        # One encode at a time, no matter how many were started together.
+        lock = acquire_render_slot()
         try:
             run(db, S3Interpreter(bucket, region=region),
                 S3Exporter(bucket, region=region), brief, args.environment,
@@ -537,6 +564,9 @@ def main():
         except RenderFailure as failure:
             print(f"[FAIL] {failure.code}: {failure.detail}")
             raise SystemExit(1)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            lock.close()
 
 
 if __name__ == "__main__":
