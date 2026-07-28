@@ -169,9 +169,12 @@ def build_filter_graph(recipe, has_audio_flags, loudness_lufs=-14.0,
     # noise, not speech), so it is ducked under the track rather than the
     # other way round. amix duration=first ends the mix with the video; the
     # music input is looped upstream (-stream_loop) so a short track fills the
-    # whole cut. normalize=0 keeps amix from halving each input by count —
-    # loudnorm sets the final level. loudnorm still lives in the graph, since
-    # ffmpeg refuses simple -af filtering on a complex-graph stream.
+    # whole cut. amix's default normalize halves both inputs by count, but the
+    # ratio between them is preserved and loudnorm sets the final level, so the
+    # balance is unchanged — and this avoids amix's normalize= option, which
+    # only exists in ffmpeg >= 4.4 and errors the whole graph on 4.2. loudnorm
+    # still lives in the graph, since ffmpeg refuses simple -af filtering on a
+    # complex-graph stream.
     if music:
         source_gain = music.get("source_gain", 0.28)
         music_gain = music.get("gain", 0.85)
@@ -180,7 +183,7 @@ def build_filter_graph(recipe, has_audio_flags, loudness_lufs=-14.0,
                      f"aformat=sample_fmts=fltp:channel_layouts=stereo,"
                      f"volume={music_gain}[amus]")
         parts.append("[abed][amus]amix=inputs=2:duration=first:"
-                     "dropout_transition=0:normalize=0[amixed]")
+                     "dropout_transition=0[amixed]")
         parts.append(f"[amixed]loudnorm=I={loudness_lufs}:TP=-1.5:LRA=11[outa]")
     else:
         parts.append(f"[cata]loudnorm=I={loudness_lufs}:TP=-1.5:LRA=11[outa]")

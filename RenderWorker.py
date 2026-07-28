@@ -311,6 +311,28 @@ def download_music(s3, recipe, workdir):
     return local, mix
 
 
+_FFMPEG_ERROR_HINTS = (
+    "error", "invalid", "unable", "no such", "failed", "cannot", "denied",
+    "not found", "does not", "no space", "out of memory", "killed",
+    "conversion failed", "buffer", "overflow", "matches no streams",
+)
+
+
+def _ffmpeg_error(code, stderr):
+    """
+    The informative part of an ffmpeg failure.
+
+    ffmpeg ends with libx264's statistics even on some failures, so the tail
+    is often useless. Pull the lines that name a cause; fall back to the tail
+    only when none are found.
+    """
+    lines = [ln.strip() for ln in (stderr or "").splitlines() if ln.strip()]
+    flagged = [ln for ln in lines
+               if any(h in ln.lower() for h in _FFMPEG_ERROR_HINTS)]
+    detail = " | ".join(flagged[-6:]) if flagged else (stderr or "")[-800:]
+    return f"ffmpeg exited {code}: {detail}"
+
+
 def render_artifacts(recipe, input_paths, workdir, ffmpeg="ffmpeg", timeout=1800,
                      drawtext_clauses=None, music_path=None, music_mix=None):
     """Produces final.mp4, preview.mp4 and thumbnail.jpg locally."""
@@ -321,7 +343,11 @@ def render_artifacts(recipe, input_paths, workdir, ffmpeg="ffmpeg", timeout=1800
                                 music_path=music_path, music_mix=music_mix),
         timeout=timeout)
     if code != 0 or not os.path.exists(final):
-        raise RenderFailure("render_failed", f"ffmpeg exited {code}: {stderr[-800:]}")
+        # Print the whole thing so journalctl has it, and raise with the lines
+        # that actually explain the failure — ffmpeg's last 800 chars are
+        # usually libx264's encode statistics, not the error.
+        print(f"[FFMPEG] failed ({code}); full stderr follows:\n{stderr}")
+        raise RenderFailure("render_failed", _ffmpeg_error(code, stderr))
 
     made = [("final", final, "video/mp4")]
 

@@ -208,3 +208,19 @@ class TestDatabaseUrl:
     def test_bad_scheme_raises(self):
         with pytest.raises(ValueError):
             worker.parse_database_url("mysql://u:p@h/d")
+
+
+class TestFfmpegErrorExtraction:
+    def test_pulls_the_real_error_over_libx264_stats(self):
+        stderr = ("Input #0 ...\n"
+                  "[Parsed_amix_0 @ 0x2] Option 'normalize' not found\n"
+                  "Error initializing complex filters.\n"
+                  "[libx264 @ 0x3] frame I:12 Avg QP:18\n"
+                  "[libx264 @ 0x3] 8x8 transform intra:6.9% BI:6.9%")
+        msg = worker._ffmpeg_error(234, stderr)
+        assert "normalize" in msg and "Error initializing complex filters" in msg
+        assert "8x8 transform" not in msg          # the useless tail is dropped
+
+    def test_falls_back_to_the_tail_when_nothing_matches(self):
+        msg = worker._ffmpeg_error(1, "just some benign progress output")
+        assert "benign progress output" in msg

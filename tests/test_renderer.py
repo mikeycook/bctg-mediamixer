@@ -164,6 +164,8 @@ class TestFilterGraph:
         assert "[3:a]aresample=48000" in graph and "volume=0.85[amus]" in graph
         assert "amix=inputs=2:duration=first" in graph
         assert "[amixed]loudnorm=" in graph                  # normalized after the mix
+        # amix normalize= is ffmpeg >= 4.4 only and errors the graph on 4.2.
+        assert "normalize=" not in graph
 
 
 class TestMusicCommand:
