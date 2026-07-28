@@ -151,6 +151,36 @@ class TestFilterGraph:
         graph = vr.build_filter_graph(recipe(three), [True, True, True])
         assert "concat=n=3:v=1:a=1[outv][cata]" in graph
 
+    def test_no_music_leaves_the_audio_tail_unchanged(self):
+        graph = vr.build_filter_graph(recipe(), [True, True])
+        assert "[cata]loudnorm=" in graph
+        assert "amix" not in graph
+
+    def test_music_ducks_ambient_and_mixes_the_bed(self):
+        # index 3: two clips (0,1), the anullsrc silence (2), then the bed (3).
+        graph = vr.build_filter_graph(recipe(), [True, True],
+                                      music={"index": 3, "gain": 0.85, "source_gain": 0.28})
+        assert "[cata]volume=0.28[abed]" in graph            # ambient ducked
+        assert "[3:a]aresample=48000" in graph and "volume=0.85[amus]" in graph
+        assert "amix=inputs=2:duration=first" in graph
+        assert "[amixed]loudnorm=" in graph                  # normalized after the mix
+
+
+class TestMusicCommand:
+    def test_bed_is_a_looped_input_after_the_silence_source(self):
+        args = vr.build_ffmpeg_command(recipe(), ["/a.mov", "/b.mov"], "/out.mp4",
+                                       music_path="/bed.mp3")
+        assert "-stream_loop" in args
+        assert args[args.index("-stream_loop") + 1] == "-1"
+        # anullsrc precedes the bed, so the bed's input index is len+1 (=3).
+        assert args.index("anullsrc=channel_layout=stereo:sample_rate=48000") < args.index("/bed.mp3")
+        assert "[3:a]aresample=48000" in " ".join(args)
+
+    def test_without_a_bed_no_loop_and_no_mix(self):
+        args = vr.build_ffmpeg_command(recipe(), ["/a.mov", "/b.mov"], "/out.mp4")
+        assert "-stream_loop" not in args
+        assert "amix" not in " ".join(args)
+
 
 class TestRenderId:
     def test_prefix_and_length(self):

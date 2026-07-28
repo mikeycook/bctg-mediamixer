@@ -37,6 +37,12 @@ PUBLISHABLE_RIGHTS = ("owned", "licensed")
 # usually the least stable, and app recordings often open mid-gesture.
 DEFAULT_LEAD_IN_MS = 250
 
+# Pre-loudnorm relative levels for the audio mix. The clips carry ambient
+# room noise, not speech, so the music sits on top and the ambient is ducked
+# well under it; loudnorm then sets the final programme level.
+DEFAULT_MUSIC_GAIN = 0.85
+DEFAULT_AMBIENT_GAIN = 0.28
+
 
 class SelectionError(Exception):
     """Carries a machine-readable code so callers can branch on the reason."""
@@ -73,6 +79,13 @@ class VideoBrief:  # noqa: D101
     # Emotion for reaction slots, matched against merged emotion tags:
     # surprised, excited, happy, shocked, confused.
     mood: Optional[str] = None
+    # Lay a licensed music bed under the video. On by default; the bed is
+    # still optional in practice, because a render proceeds without one when
+    # no cleared track is eligible.
+    with_music: bool = True
+    # Pin a specific track by its MUS-id instead of choosing. Must still be
+    # active and commercially cleared, or selection falls back to choosing.
+    music_track_id: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]):
@@ -87,6 +100,8 @@ class VideoBrief:  # noqa: D101
             seed=data.get("seed"),
             allow_landscape=bool(data.get("allow_landscape", False)),
             mood=(data.get("mood") or None),
+            with_music=bool(data.get("with_music", True)),
+            music_track_id=(data.get("music_track_id") or None),
             prefer_unused=bool(data.get("prefer_unused", True)),
             caption_overrides={k: str(v) for k, v in
                                (data.get("caption_overrides") or {}).items()
@@ -461,6 +476,83 @@ def build_recipe(brief, template, filled):
     }
 
 
+def eligible_music(db):
+    """
+    Cleared music: active, commercially usable, and not lapsed.
+
+    commercial_use_allowed must be explicitly true — a NULL is "not yet
+    confirmed", which is not a licence to publish. An -nc track never reaches
+    here because it can never be marked commercial_use_allowed.
+    """
+    rows = db.execute_query_as_dict("""
+        SELECT id, track_id, s3_key, title, artist, album, genre, mood,
+               source, source_url, license, license_url,
+               attribution_required, attribution_text, duration_ms
+        FROM public.content_library_music_tracks
+        WHERE status = 'active'
+          AND commercial_use_allowed = true
+          AND (license_expires_at IS NULL OR license_expires_at > now())
+        ORDER BY track_id
+    """)
+    return rows if isinstance(rows, list) else []
+
+
+def choose_music(db, brief: VideoBrief, rng):
+    """
+    Picks one cleared track for the bed, or None when none is eligible.
+
+    A pinned music_track_id wins if it is itself cleared. Otherwise, when the
+    brief names a mood and any cleared track shares it, the choice is drawn
+    from those; failing that, from all cleared tracks. The draw is seeded, so
+    the same brief yields the same bed.
+    """
+    tracks = eligible_music(db)
+    if not tracks:
+        return None
+
+    if brief.music_track_id:
+        pinned = [t for t in tracks if t.get("track_id") == brief.music_track_id]
+        if pinned:
+            return pinned[0]
+
+    pool = tracks
+    if brief.mood:
+        wanted = brief.mood.strip().lower()
+        matched = [t for t in tracks if (t.get("mood") or "").strip().lower() == wanted]
+        if matched:
+            pool = matched
+    return rng.choice(sorted(pool, key=lambda t: t["id"]))
+
+
+def attach_music(recipe, track):
+    """
+    Records the chosen bed on the recipe: `music` carries the attribution
+    facts (read by Attribution and by lineage), `audio_mix.music` carries
+    what the renderer needs to fetch and mix it.
+    """
+    recipe["music"] = [{
+        "track_pk": track["id"],
+        "track_id": track.get("track_id"),
+        "s3_key": track["s3_key"],
+        "role": "bed",
+        "title": track.get("title"),
+        "artist": track.get("artist"),
+        "source": track.get("source"),
+        "source_url": track.get("source_url"),
+        "license": track.get("license"),
+        "license_url": track.get("license_url"),
+        "attribution_required": bool(track.get("attribution_required")),
+        "attribution_text": track.get("attribution_text"),
+    }]
+    recipe["audio_mix"]["music"] = {
+        "track_pk": track["id"],
+        "track_id": track.get("track_id"),
+        "s3_key": track["s3_key"],
+        "gain": DEFAULT_MUSIC_GAIN,
+        "source_gain": DEFAULT_AMBIENT_GAIN,
+    }
+
+
 def select(db, brief: VideoBrief, template_dir=TEMPLATE_DIR):
     """
     Produces a recipe, or raises SelectionError with a code from the design
@@ -530,6 +622,10 @@ def select(db, brief: VideoBrief, template_dir=TEMPLATE_DIR):
         )
 
     recipe = build_recipe(brief, template, filled)
+    if brief.with_music:
+        track = choose_music(db, brief, rng)
+        if track:
+            attach_music(recipe, track)
     if skipped:
         recipe["skipped_optional_slots"] = skipped
     return recipe

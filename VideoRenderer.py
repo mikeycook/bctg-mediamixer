@@ -120,7 +120,7 @@ def validate_recipe(recipe, schema_path=None):
 
 
 def build_filter_graph(recipe, has_audio_flags, loudness_lufs=-14.0,
-                       drawtext_clauses=None):
+                       drawtext_clauses=None, music=None):
     """
     Normalizes every clip to the canvas, concatenates, then normalizes
     loudness — all inside the one graph.
@@ -164,13 +164,32 @@ def build_filter_graph(recipe, has_audio_flags, loudness_lufs=-14.0,
         parts.append(f"[cutv]{','.join(drawtext_clauses)}[outv]")
     else:
         parts.append(f"{''.join(labels)}concat=n={len(recipe['timeline'])}:v=1:a=1[outv][cata]")
-    parts.append(f"[cata]loudnorm=I={loudness_lufs}:TP=-1.5:LRA=11[outa]")
+
+    # Music bed, when one was selected. The clip audio is ambient (restaurant
+    # noise, not speech), so it is ducked under the track rather than the
+    # other way round. amix duration=first ends the mix with the video; the
+    # music input is looped upstream (-stream_loop) so a short track fills the
+    # whole cut. normalize=0 keeps amix from halving each input by count —
+    # loudnorm sets the final level. loudnorm still lives in the graph, since
+    # ffmpeg refuses simple -af filtering on a complex-graph stream.
+    if music:
+        source_gain = music.get("source_gain", 0.28)
+        music_gain = music.get("gain", 0.85)
+        parts.append(f"[cata]volume={source_gain}[abed]")
+        parts.append(f"[{music['index']}:a]aresample=48000,"
+                     f"aformat=sample_fmts=fltp:channel_layouts=stereo,"
+                     f"volume={music_gain}[amus]")
+        parts.append("[abed][amus]amix=inputs=2:duration=first:"
+                     "dropout_transition=0:normalize=0[amixed]")
+        parts.append(f"[amixed]loudnorm=I={loudness_lufs}:TP=-1.5:LRA=11[outa]")
+    else:
+        parts.append(f"[cata]loudnorm=I={loudness_lufs}:TP=-1.5:LRA=11[outa]")
     return ";".join(parts)
 
 
 def build_ffmpeg_command(recipe, input_paths, output_path, ffmpeg="ffmpeg",
                          has_audio_flags=None, loudness_lufs=-14.0,
-                         drawtext_clauses=None):
+                         drawtext_clauses=None, music_path=None, music_mix=None):
     """
     Returns the argv for one render. Pure: no filesystem, no subprocess.
 
@@ -196,6 +215,18 @@ def build_ffmpeg_command(recipe, input_paths, output_path, ffmpeg="ffmpeg",
     # Silence source for clips with no audio track, referenced by the graph.
     args += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
 
+    # Music bed, if any. -stream_loop -1 loops a track shorter than the video;
+    # amix duration=first trims a longer one. Added after the clips and the
+    # silence source, so its filter index is len(timeline) + 1.
+    music = None
+    if music_path:
+        args += ["-stream_loop", "-1", "-i", music_path]
+        music = {
+            "index": len(timeline) + 1,
+            "gain": (music_mix or {}).get("gain", 0.85),
+            "source_gain": (music_mix or {}).get("source_gain", 0.28),
+        }
+
     # Loudness normalization lives inside the filter graph, not in an -af
     # flag: ffmpeg rejects simple filtering on a stream that comes out of
     # -filter_complex. Social platforms normalize on upload anyway, so
@@ -203,7 +234,8 @@ def build_ffmpeg_command(recipe, input_paths, output_path, ffmpeg="ffmpeg",
     args += [
         "-filter_complex", build_filter_graph(recipe, has_audio_flags,
                                               loudness_lufs=loudness_lufs,
-                                              drawtext_clauses=drawtext_clauses),
+                                              drawtext_clauses=drawtext_clauses,
+                                              music=music),
         "-map", "[outv]", "-map", "[outa]",
         "-c:v", "libx264", "-preset", "medium", "-crf", "20",
         "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.0",

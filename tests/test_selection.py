@@ -654,3 +654,77 @@ class TestReactionArc:
         with pytest.raises(sel.SelectionError) as excinfo:
             sel.select(MoodAwareDb(full_library()), brief)
         assert "reaction_open" in excinfo.value.diagnostics["unfilled_slots"]
+
+
+# ---------------------------------------------------------------------------
+# Music bed
+# ---------------------------------------------------------------------------
+
+def music_row(pk, **kw):
+    base = {
+        "id": pk, "track_id": f"MUS-{pk:05d}",
+        "s3_key": f"ugc-assets/music/{pk}.mp3",
+        "title": f"Track {pk}", "artist": "Artist", "album": None,
+        "genre": None, "mood": None, "source": "Audio Library",
+        "source_url": f"https://y/{pk}", "license": "cc_by",
+        "license_url": "https://l/by", "attribution_required": True,
+        "attribution_text": None, "duration_ms": 60000,
+        "status": "active", "commercial_use_allowed": True,
+    }
+    base.update(kw)
+    return base
+
+
+class MusicDb(MoodAwareDb):
+    """Serves the music query from a separate list; asset queries pass through."""
+
+    def __init__(self, rows, tracks=None):
+        super().__init__(rows)
+        self.tracks = tracks or []
+
+    def execute_query_as_dict(self, sql, params=None):
+        if "content_library_music_tracks" in sql:
+            self.queries.append((sql, params))
+            return [dict(t) for t in self.tracks
+                    if t.get("status") == "active" and t.get("commercial_use_allowed")]
+        return super().execute_query_as_dict(sql, params)
+
+
+class TestMusicBed:
+    def test_a_cleared_track_becomes_the_bed(self):
+        recipe = sel.select(MusicDb(full_library(), [music_row(1)]), NY)
+        assert recipe["music"][0]["track_id"] == "MUS-00001"
+        assert recipe["music"][0]["attribution_required"] is True
+        mix = recipe["audio_mix"]["music"]
+        assert mix["s3_key"] == "ugc-assets/music/1.mp3"
+        assert mix["gain"] == sel.DEFAULT_MUSIC_GAIN
+        assert mix["source_gain"] == sel.DEFAULT_AMBIENT_GAIN
+
+    def test_no_eligible_track_leaves_no_bed(self):
+        recipe = sel.select(MusicDb(full_library(), []), NY)
+        assert recipe.get("music") is None
+        assert recipe["audio_mix"]["music"] is None
+
+    def test_unconfirmed_commercial_use_is_not_selected(self):
+        # commercial_use_allowed NULL means "not confirmed", not a licence.
+        recipe = sel.select(
+            MusicDb(full_library(), [music_row(1, commercial_use_allowed=None)]), NY)
+        assert recipe.get("music") is None
+
+    def test_with_music_false_skips_the_bed(self):
+        brief = sel.VideoBrief(cityid="CIT-00000000002", topic="pizza",
+                               seed="test", with_music=False)
+        recipe = sel.select(MusicDb(full_library(), [music_row(1)]), brief)
+        assert recipe.get("music") is None
+
+    def test_a_pinned_track_is_used(self):
+        brief = sel.VideoBrief(cityid="CIT-00000000002", topic="pizza",
+                               seed="test", music_track_id="MUS-00002")
+        recipe = sel.select(MusicDb(full_library(), [music_row(1), music_row(2)]), brief)
+        assert recipe["music"][0]["track_id"] == "MUS-00002"
+
+    def test_the_choice_is_deterministic_for_a_seed(self):
+        tracks = [music_row(i) for i in range(1, 6)]
+        a = sel.select(MusicDb(full_library(), tracks), NY)
+        b = sel.select(MusicDb(full_library(), tracks), NY)
+        assert a["music"][0]["track_id"] == b["music"][0]["track_id"]

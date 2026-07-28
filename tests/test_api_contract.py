@@ -37,6 +37,11 @@ class TestPathsMatchTheAdminUi:
         ("/admin/content-library/sync", "POST"),
         ("/admin/content-library/{asset_pk}", "PUT"),
         ("/admin/content-library/{asset_pk}", "DELETE"),
+        ("/admin/music-library", "GET"),
+        ("/admin/music-library/options", "GET"),
+        ("/admin/music-library/sync", "POST"),
+        ("/admin/music-library/{track_pk}", "PUT"),
+        ("/admin/music-library/{track_pk}", "DELETE"),
     ])
     def test_endpoint_exists(self, path, method):
         assert method in routes().get(path, set())
@@ -52,6 +57,11 @@ class TestPathsMatchTheAdminUi:
             "/admin/content-library/options",
             "/admin/content-library/sync",
             "/admin/content-library/{asset_pk}",
+            # Music library
+            "/admin/music-library",
+            "/admin/music-library/options",
+            "/admin/music-library/sync",
+            "/admin/music-library/{track_pk}",
             # Briefs and renders
             "/admin/templates",
             "/admin/render-cities",

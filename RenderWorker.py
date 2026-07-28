@@ -293,13 +293,32 @@ def plan_and_write_captions(db, recipe, workdir, overrides=None):
     return clauses, caption_list
 
 
+def download_music(s3, recipe, workdir):
+    """
+    Fetches the music bed, if the recipe selected one. Returns (path, mix) or
+    (None, None). No checksum verification: unlike a source clip, a bed swap
+    is not a provenance problem — the credit is bound to the track chosen at
+    selection, which is what attribution.txt and the lineage record.
+    """
+    mix = (recipe.get("audio_mix") or {}).get("music")
+    if not mix or not mix.get("s3_key"):
+        return None, None
+    local = os.path.join(workdir, "music_" + os.path.basename(mix["s3_key"]))
+    with open(local, "wb") as handle:
+        for chunk in s3.iter_object(mix["s3_key"]):
+            handle.write(chunk)
+    print(f"[MUS ] bed {mix['s3_key']}")
+    return local, mix
+
+
 def render_artifacts(recipe, input_paths, workdir, ffmpeg="ffmpeg", timeout=1800,
-                     drawtext_clauses=None):
+                     drawtext_clauses=None, music_path=None, music_mix=None):
     """Produces final.mp4, preview.mp4 and thumbnail.jpg locally."""
     final = os.path.join(workdir, "final.mp4")
     code, stderr = vr.run_ffmpeg(
         vr.build_ffmpeg_command(recipe, input_paths, final, ffmpeg=ffmpeg,
-                                drawtext_clauses=drawtext_clauses),
+                                drawtext_clauses=drawtext_clauses,
+                                music_path=music_path, music_mix=music_mix),
         timeout=timeout)
     if code != 0 or not os.path.exists(final):
         raise RenderFailure("render_failed", f"ffmpeg exited {code}: {stderr[-800:]}")
@@ -350,9 +369,12 @@ def run(db, s3, exporter, brief, environment, scratch_root, ffmpeg="ffmpeg",
                                                   brief.caption_overrides)
         recipe["captions"] = [c.as_dict() for c in planned]
 
+        music_path, music_mix = download_music(s3, recipe, workdir)
+
         print("[FFMPEG] encoding")
         final, made = render_artifacts(recipe, inputs, workdir, ffmpeg=ffmpeg,
-                                       drawtext_clauses=clauses)
+                                       drawtext_clauses=clauses,
+                                       music_path=music_path, music_mix=music_mix)
 
         if planned:
             srt = os.path.join(workdir, "captions.srt")
