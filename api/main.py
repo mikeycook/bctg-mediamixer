@@ -53,6 +53,12 @@ _ADMIN_SECRET = os.getenv("MEDIAMIXER_ADMIN_SECRET", "")
 
 _s3 = S3Interpreter(_BUCKET, region=_REGION)
 
+# How many un-measured clips the Sync button probes+checksums inline before
+# leaving the rest to the scheduled job. Kept small so the request stays
+# inside the browser's timeout even when a checksum downloads a whole clip.
+_SYNC_PROBE_LIMIT = int(os.getenv("SYNC_PROBE_LIMIT", "12"))
+_SYNC_PROBE_TIMEOUT = int(os.getenv("SYNC_PROBE_TIMEOUT", "60"))
+
 # Columns a reviewer may write. The governance fields are here so an asset
 # can be activated through the tab that already exists, rather than needing
 # new UI before anything can become eligible.
@@ -215,9 +221,34 @@ def sync_content_library(db=Depends(get_db), _=Depends(require_secret)):
         "UPDATE public.content_library_assets "
         "SET asset_id = 'UGC-' || lpad(id::text, 5, '0') WHERE asset_id IS NULL")
 
-    # Response shape matches the admin backend's, so the tab's handler is
-    # unchanged. Durations come from the scheduled job now, hence zero.
-    return {"added": added, "durations": 0, "listed": len(objects)}
+    # Probe a bounded batch of un-measured clips inline, so a clip uploaded a
+    # moment ago (the end-card, say) becomes selectable straight from this
+    # button instead of waiting on the scheduled mediamixer-sync job. Capped
+    # because a probe plus a full-object checksum is heavy; a large backlog is
+    # left to the scheduled job. Selection needs both duration_ms (probe) and
+    # checksum_sha256, so both are filled here.
+    probed = 0
+    pending = _rows_as_dicts(db, """
+        SELECT id, s3_key, status, duration_ms, checksum_sha256
+        FROM public.content_library_assets
+        WHERE missing_since IS NULL AND asset_type IS NOT NULL
+          AND (duration_ms IS NULL OR checksum_sha256 IS NULL)
+        ORDER BY id
+        LIMIT %(limit)s
+    """, {"limit": _SYNC_PROBE_LIMIT})
+    for asset in pending:
+        key = asset["s3_key"]
+        try:
+            if asset["duration_ms"] is None:
+                sync.probe_asset(db, _s3, asset, key, _SYNC_PROBE_TIMEOUT)
+            if asset["checksum_sha256"] is None:
+                sync.checksum_asset(db, _s3, asset["id"], key)
+            probed += 1
+        except Exception:
+            continue
+
+    # 'durations' keeps the admin tab's handler unchanged.
+    return {"added": added, "durations": probed, "listed": len(objects)}
 
 
 # Namespaces a reviewer may write. `emotion` is included so a wrong
