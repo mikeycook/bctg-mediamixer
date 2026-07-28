@@ -45,6 +45,7 @@ import tempfile
 from datetime import datetime, timezone
 from urllib.parse import urlparse, unquote
 
+import Attribution as attribution
 import CaptionBuilder as captions
 import ContentLibraryProbe as clprobe
 import ContentLibrarySelect as clselect
@@ -189,6 +190,27 @@ def record_render_assets(db, render_pk, recipe):
               json.dumps(clip.get("audio_policy") or {})))
 
 
+def record_render_music(db, render_pk, tracks):
+    """
+    Lineage: which music a render credited, so a published video's
+    attribution can be reconstructed from the render alone. Best-effort — a
+    track dict that carries its catalog id is recorded, one without is
+    skipped, so this is harmless until music selection populates ids.
+    """
+    seq = 0
+    for track in tracks or []:
+        track_pk = track.get("track_pk") or track.get("id")
+        if not track_pk:
+            continue
+        db.execute_query("""
+            INSERT INTO public.content_library_render_music
+                (render_id, track_id, sequence_no, role)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (render_id, sequence_no) DO NOTHING
+        """, (render_pk, track_pk, seq, track.get("role", "bed")))
+        seq += 1
+
+
 def record_artifacts(db, render_pk, artifacts):
     for artifact in artifacts:
         db.execute_query("""
@@ -240,10 +262,24 @@ def plan_and_write_captions(db, recipe, workdir, overrides=None):
     plan = captions.plan_for_recipe(db, recipe, overrides)
     for problem in plan.unresolved:
         print(f"[CAPT] skipped — {problem}")
-    if not plan.captions:
+
+    caption_list = list(plan.captions)
+
+    # A music bed that requires attribution earns a short credit at the end,
+    # for the viewers who never open the description. The full credit still
+    # goes to attribution.txt; this is the courtesy copy. Runs through the
+    # same wrap/fit/drawtext path as every other caption.
+    outro = attribution.burn_in_credit(recipe.get("music"))
+    total = int(recipe.get("total_duration_ms") or 0)
+    if outro and total > 0:
+        caption_list.append(captions.Caption(
+            text=outro, start_ms=max(0, total - 3000), end_ms=total, style="label"))
+        caption_list.sort(key=lambda c: c.start_ms)
+
+    if not caption_list:
         return [], []
 
-    prepared = captions.write_caption_files(plan.captions, workdir, recipe["canvas"])
+    prepared = captions.write_caption_files(caption_list, workdir, recipe["canvas"])
     font = captions.find_font()
     if font is None:
         print("[CAPT] no usable font found; install fonts-dejavu-core. "
@@ -251,10 +287,10 @@ def plan_and_write_captions(db, recipe, workdir, overrides=None):
         return [], []
 
     clauses = captions.drawtext_filters(prepared, recipe["canvas"], fontfile=font)
-    for caption in plan.captions:
+    for caption in caption_list:
         print(f"[CAPT] {caption.start_ms / 1000:5.1f}s  {caption.style:<6} "
               f"{caption.text}")
-    return clauses, plan.captions
+    return clauses, caption_list
 
 
 def render_artifacts(recipe, input_paths, workdir, ffmpeg="ffmpeg", timeout=1800,
@@ -323,6 +359,16 @@ def run(db, s3, exporter, brief, environment, scratch_root, ffmpeg="ffmpeg",
             with open(srt, "w", encoding="utf-8") as handle:
                 handle.write(captions.to_srt(planned))
             made.append(("captions", srt, "application/x-subrip"))
+
+        # Music credits the licence requires: the authoritative full copy,
+        # written beside the video for the publisher to paste into the post.
+        credit = attribution.attribution_text(recipe.get("music"))
+        if credit:
+            apath = os.path.join(workdir, "attribution.txt")
+            with open(apath, "w", encoding="utf-8") as handle:
+                handle.write(credit)
+            made.append(("attribution", apath, "text/plain"))
+            record_render_music(db, render_pk, recipe.get("music"))
 
         probe = clprobe.probe(final)
         validation = vr.validate_output(probe, recipe)

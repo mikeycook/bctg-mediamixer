@@ -342,6 +342,239 @@ def delete_content_library(asset_pk: int, db=Depends(get_db),
 
 
 # ---------------------------------------------------------------------------
+# Music library
+#
+# Same shape as the content library above, over content_library_music_tracks.
+# The reason a music track is its own kind and not asset_type='music' is the
+# licence: a bed carries an attribution string and the two questions that
+# actually gate use — is commercial use allowed, are derivatives allowed —
+# which a clip never does. These promote a paid product, so both matter.
+# ---------------------------------------------------------------------------
+_MUSIC_PREFIX = os.getenv("MUSIC_PREFIX", "ugc-assets/music/")
+_AUDIO_EXT = (".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus")
+
+# Columns a reviewer may write. Object and probe facts are omitted: those are
+# established by sync and ffprobe, never typed.
+_MUSIC_EDITABLE = {
+    "track_id", "title", "artist", "album", "genre", "mood", "bpm", "energy",
+    "instrumental", "tags", "license", "license_url", "source", "source_url",
+    "commercial_use_allowed", "derivatives_allowed", "attribution_required",
+    "attribution_text", "license_expires_at", "license_proof_s3_key", "notes",
+    "status", "reviewed_by", "reviewed_at",
+}
+_MUSIC_OPTION_FIELDS = ("genre", "mood", "license", "source", "status")
+_MUSIC_BOOL = {"commercial_use_allowed", "derivatives_allowed",
+               "attribution_required", "instrumental"}
+
+
+def _to_bool(v):
+    if v is None or v == "":
+        return None
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().lower() in ("1", "true", "yes", "y", "t")
+
+
+def _to_number(v, cast):
+    if v is None or (isinstance(v, str) and not v.strip()):
+        return None
+    try:
+        return cast(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_str_list(value):
+    """Freeform tags: a list, or a comma-separated string. Empty -> []."""
+    if value is None:
+        return []
+    items = value if isinstance(value, list) else str(value).split(",")
+    seen, out = set(), []
+    for item in items:
+        s = str(item).strip()
+        if s and s.lower() not in seen:
+            seen.add(s.lower())
+            out.append(s)
+    return out
+
+
+def _coerce_music(values):
+    out = {}
+    for k, v in values.items():
+        if k not in _MUSIC_EDITABLE:
+            continue
+        if k == "tags":
+            out[k] = _parse_str_list(v)
+        elif k in _MUSIC_BOOL:
+            out[k] = _to_bool(v)
+        elif k == "bpm":
+            out[k] = _to_number(v, float)
+        elif k == "energy":
+            out[k] = _to_number(v, int)
+        else:
+            out[k] = v if v != "" else None
+    return out
+
+
+def _probe_audio(url, timeout=60):
+    """Duration/sample rate/channels/codec, read over the presigned URL."""
+    proc = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-print_format", "json",
+         "-show_format", "-show_streams", url],
+        capture_output=True, text=True, timeout=timeout)
+    data = json.loads(proc.stdout or "{}")
+    fmt = data.get("format", {})
+    astream = next((s for s in data.get("streams", [])
+                    if s.get("codec_type") == "audio"), {})
+    dur = fmt.get("duration") or astream.get("duration")
+    return {
+        "duration_ms": int(float(dur) * 1000) if dur else None,
+        "sample_rate": _to_number(astream.get("sample_rate"), int),
+        "channels": astream.get("channels"),
+        "audio_codec": astream.get("codec_name"),
+    }
+
+
+_MUSIC_INSERT_SQL = """
+INSERT INTO public.content_library_music_tracks
+    (bucket_name, s3_key, filename, folder, size_bytes, content_type, etag,
+     s3_last_modified_at, duration_ms, sample_rate, channels, audio_codec)
+VALUES
+    (%(bucket)s, %(key)s, %(filename)s, %(folder)s, %(size)s, %(content_type)s,
+     %(etag)s, %(last_modified)s, %(duration_ms)s, %(sample_rate)s,
+     %(channels)s, %(audio_codec)s)
+ON CONFLICT (s3_key) DO NOTHING
+"""
+
+
+@app.get("/admin/music-library")
+def list_music_library(db=Depends(get_db), _=Depends(require_secret)):
+    rows = _rows_as_dicts(
+        db, "SELECT * FROM public.content_library_music_tracks ORDER BY s3_key")
+    out = []
+    for row in rows:
+        row["created_at"] = str(row.get("created_at") or "")
+        row["updated_at"] = str(row.get("updated_at") or "")
+        row["license_expires_at"] = str(row.get("license_expires_at") or "")
+        try:
+            row["preview_url"] = _s3.presign(row["s3_key"])
+        except Exception:
+            row["preview_url"] = None
+        out.append(row)
+    return {"tracks": out}
+
+
+@app.get("/admin/music-library/options")
+def music_library_options(field: str = Query(...), db=Depends(get_db),
+                          _=Depends(require_secret)):
+    if field not in _MUSIC_OPTION_FIELDS:
+        raise HTTPException(status_code=400, detail="invalid field")
+    column = _quote_ident(field)
+    rows = db.execute_query(
+        f"SELECT DISTINCT {column} AS v FROM public.content_library_music_tracks "
+        f"WHERE {column} IS NOT NULL AND {column}::text <> '' ORDER BY 1")
+    return {"values": [r[0] for r in (rows or [])]}
+
+
+@app.post("/admin/music-library/sync")
+def sync_music_library(db=Depends(get_db), _=Depends(require_secret)):
+    """
+    Registers new tracks under the music prefix and probes each once.
+
+    Unlike the clip sync, this probes inline: the music library is small and
+    an audio ffprobe reads only the header, so a duration is available the
+    moment a track appears rather than waiting on a scheduled pass.
+    """
+    existing = {r[0] for r in
+                (db.execute_query(
+                    "SELECT s3_key FROM public.content_library_music_tracks") or [])}
+    added, probed, listed = 0, 0, 0
+    try:
+        for obj in _s3.list_objects(_MUSIC_PREFIX):
+            key, size = obj["key"], obj["size"]
+            if key.endswith("/") or size == 0:
+                continue
+            if not key.lower().endswith(_AUDIO_EXT):
+                continue
+            listed += 1
+            if key in existing:
+                continue
+            meta = {"duration_ms": None, "sample_rate": None,
+                    "channels": None, "audio_codec": None}
+            content_type = None
+            try:
+                content_type = _s3.head(key).get("content_type")
+            except Exception:
+                pass
+            try:
+                meta = _probe_audio(_s3.presign(key))
+                if meta.get("duration_ms"):
+                    probed += 1
+            except Exception:
+                pass
+            db.execute_query(_MUSIC_INSERT_SQL, {
+                "bucket": _BUCKET, "key": key,
+                "filename": key.rsplit("/", 1)[-1],
+                "folder": (key.rsplit("/", 1)[0] + "/") if "/" in key else "",
+                "size": size, "content_type": content_type,
+                "etag": obj.get("etag"), "last_modified": obj.get("last_modified"),
+                **meta})
+            added += 1
+        db.execute_query(
+            "UPDATE public.content_library_music_tracks "
+            "SET track_id = 'MUS-' || lpad(id::text, 5, '0') WHERE track_id IS NULL")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"S3 sync error: {str(exc)[:300]}")
+    return {"added": added, "probed": probed, "listed": listed}
+
+
+@app.put("/admin/music-library/{track_pk}")
+def update_music_library(track_pk: int, body: ContentLibraryUpdate,
+                         db=Depends(get_db), _=Depends(require_secret)):
+    values = _coerce_music(body.values)
+    if not values:
+        return {"ok": True}
+
+    current = _rows_as_dicts(
+        db, "SELECT status, attribution_required, attribution_text "
+            "FROM public.content_library_music_tracks WHERE id = %s", (track_pk,))
+    if not current:
+        raise HTTPException(status_code=404, detail="track not found")
+    merged = {**current[0], **values}
+    text_val = merged.get("attribution_text") or ""
+    if (str(merged.get("status")) == "active"
+            and merged.get("attribution_required")
+            and not str(text_val).strip()):
+        # The DB CHECK enforces this too; caught here for a legible message.
+        raise HTTPException(
+            status_code=422,
+            detail="Cannot activate: this track's licence requires attribution "
+                   "but Attribution Text is empty.")
+
+    assignments = ", ".join(f"{_quote_ident(k)} = %({k})s" for k in values)
+    params = {**values, "id": track_pk}
+    result = db.execute_query(
+        f"UPDATE public.content_library_music_tracks SET {assignments} "
+        f"WHERE id = %(id)s", params)
+    if result is False:
+        raise HTTPException(status_code=409,
+                            detail="update rejected (track_id must be unique)")
+    return {"ok": True}
+
+
+@app.delete("/admin/music-library/{track_pk}")
+def delete_music_library(track_pk: int, db=Depends(get_db),
+                         _=Depends(require_secret)):
+    result = db.execute_query(
+        "DELETE FROM public.content_library_music_tracks WHERE id = %s", (track_pk,))
+    if result is False:
+        raise HTTPException(
+            status_code=409,
+            detail="cannot delete: track is credited by a render")
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # Video briefs and renders
 #
 # A brief is what a person authors. A recipe is generated from it and is
