@@ -416,8 +416,33 @@ def _coerce_music(values):
     return out
 
 
+_MUSIC_PROBE_DEFAULT = {
+    "duration_ms": None, "sample_rate": None, "channels": None,
+    "audio_codec": None, "title": None, "artist": None, "album": None,
+    "genre": None, "mood": None, "bpm": None,
+}
+
+
+def _tag(tags, *names):
+    """Case-insensitive first-non-empty lookup across candidate tag names."""
+    low = {str(k).lower(): v for k, v in (tags or {}).items()}
+    for name in names:
+        value = low.get(name.lower())
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return None
+
+
 def _probe_audio(url, timeout=60):
-    """Duration/sample rate/channels/codec, read over the presigned URL."""
+    """
+    Facts and embedded metadata, read over the presigned URL.
+
+    Beyond duration/sample-rate, ffprobe surfaces the file's ID3 tags:
+    title/artist/album/genre/BPM are lifted straight from them when present,
+    so a well-tagged download needs little hand entry. Mood is read only if
+    the file actually carries one — most do not — and is left for a reviewer
+    otherwise.
+    """
     proc = subprocess.run(
         ["ffprobe", "-v", "quiet", "-print_format", "json",
          "-show_format", "-show_streams", url],
@@ -427,22 +452,31 @@ def _probe_audio(url, timeout=60):
     astream = next((s for s in data.get("streams", [])
                     if s.get("codec_type") == "audio"), {})
     dur = fmt.get("duration") or astream.get("duration")
+    tags = {**(fmt.get("tags") or {}), **(astream.get("tags") or {})}
     return {
         "duration_ms": int(float(dur) * 1000) if dur else None,
         "sample_rate": _to_number(astream.get("sample_rate"), int),
         "channels": astream.get("channels"),
         "audio_codec": astream.get("codec_name"),
+        "title": _tag(tags, "title"),
+        "artist": _tag(tags, "artist", "album_artist", "performer"),
+        "album": _tag(tags, "album"),
+        "genre": _tag(tags, "genre"),
+        "mood": _tag(tags, "mood", "TMOO"),
+        "bpm": _to_number(_tag(tags, "TBPM", "bpm", "tempo"), float),
     }
 
 
 _MUSIC_INSERT_SQL = """
 INSERT INTO public.content_library_music_tracks
     (bucket_name, s3_key, filename, folder, size_bytes, content_type, etag,
-     s3_last_modified_at, duration_ms, sample_rate, channels, audio_codec)
+     s3_last_modified_at, duration_ms, sample_rate, channels, audio_codec,
+     title, artist, album, genre, mood, bpm)
 VALUES
     (%(bucket)s, %(key)s, %(filename)s, %(folder)s, %(size)s, %(content_type)s,
      %(etag)s, %(last_modified)s, %(duration_ms)s, %(sample_rate)s,
-     %(channels)s, %(audio_codec)s)
+     %(channels)s, %(audio_codec)s,
+     %(title)s, %(artist)s, %(album)s, %(genre)s, %(mood)s, %(bpm)s)
 ON CONFLICT (s3_key) DO NOTHING
 """
 
@@ -499,8 +533,7 @@ def sync_music_library(db=Depends(get_db), _=Depends(require_secret)):
             listed += 1
             if key in existing:
                 continue
-            meta = {"duration_ms": None, "sample_rate": None,
-                    "channels": None, "audio_codec": None}
+            meta = dict(_MUSIC_PROBE_DEFAULT)
             content_type = None
             try:
                 content_type = _s3.head(key).get("content_type")
