@@ -43,6 +43,12 @@ DEFAULT_LEAD_IN_MS = 250
 DEFAULT_MUSIC_GAIN = 0.85
 DEFAULT_AMBIENT_GAIN = 0.28
 
+# Duration budget for the branded end-card when it is appended to a template
+# that has no cta slot of its own.
+_ENDCARD_MIN_MS = 2000
+_ENDCARD_PREFERRED_MS = 2500
+_ENDCARD_MAX_MS = 3000
+
 
 class SelectionError(Exception):
     """Carries a machine-readable code so callers can branch on the reason."""
@@ -171,6 +177,11 @@ class Slot:
     # whose subtype is that feature — so a "live tracking" video uses the
     # live-tracking clip, not the pizza-map one. Set on the app slot.
     match_feature: bool = False
+    # Continue the story of an earlier slot: name its role here and this slot
+    # prefers a clip of the same place (ideally) or at least the same food
+    # category — so the interior and the dish are one venue, not two. The
+    # diversity penalties that would fight the repeat are lifted for the match.
+    cohere_with: Optional[str] = None
     # Emotions this slot accepts, independent of the brief. Set when a
     # template wants a specific arc — intrigue early, delight later — which
     # a single brief-level mood cannot express. Takes precedence over
@@ -317,7 +328,7 @@ def shot_signal(row):
 
 
 def score_candidate(row, brief: VideoBrief, slot: Slot, used_places, used_subcats,
-                    used_shot_types=None):
+                    used_shot_types=None, cohere_place=None, cohere_subcat=None):
     """
     Higher is better. Preferences only — anything disqualifying was already
     removed by eligible_candidates.
@@ -384,13 +395,26 @@ def score_candidate(row, brief: VideoBrief, slot: Slot, used_places, used_subcat
     # exterior followed by a dish close-up of the same place stays viable —
     # which is what makes depth on one location useful rather than wasted.
     place = (row.get("place_name") or "").lower()
-    if place and place in used_places:
+    subcat = (row.get("subcategory") or "").lower()
+
+    # Cohesion. A slot can be asked to continue an earlier one's story — the
+    # dish for the venue we just went inside. Matching that anchor's place (or
+    # at least its food category) is then a reward, and the diversity
+    # penalties that would otherwise fight the repeat are lifted for it. The
+    # reward outweighs a topic match, so the payoff shot stays with its venue.
+    cohered_place = bool(cohere_place) and place == cohere_place
+    cohered_subcat = bool(cohere_subcat) and subcat == cohere_subcat
+    if cohered_place:
+        score += 55
+    elif cohered_subcat:
+        score += 22
+
+    if place and place in used_places and not cohered_place:
         score -= 30
     shot = shot_signal(row)
     if shot and shot in used_shot_types:
         score -= 12
-    subcat = (row.get("subcategory") or "").lower()
-    if subcat and subcat in used_subcats:
+    if subcat and subcat in used_subcats and not (cohered_place or cohered_subcat):
         score -= 8
 
     if row.get("orientation") == "portrait":
@@ -404,7 +428,8 @@ def _rng(brief: VideoBrief):
 
 
 def choose_for_slot(candidates, brief, slot, used_ids, used_checksums,
-                    used_places, used_subcats, rng, used_shot_types=None):
+                    used_places, used_subcats, rng, used_shot_types=None,
+                    cohere_place=None, cohere_subcat=None):
     """
     Best-scoring candidate not already committed to this render.
 
@@ -419,7 +444,7 @@ def choose_for_slot(candidates, brief, slot, used_ids, used_checksums,
         return None
 
     scored = [(score_candidate(c, brief, slot, used_places, used_subcats,
-                              used_shot_types), c)
+                              used_shot_types, cohere_place, cohere_subcat), c)
               for c in pool]
     best = max(s for s, _ in scored)
     # Ties broken by seeded choice, so a rerun of the same brief is stable
@@ -619,26 +644,32 @@ def select(db, brief: VideoBrief, template_dir=TEMPLATE_DIR):
     template = load_template(brief.template_id, template_dir)
     rng = _rng(brief)
 
-    # End-card: when asked for and one is actually available, point the cta
-    # slot at asset_type='cta' and drop its generated caption, since the card
-    # carries its own text. If none is available, leave the slot untouched so
-    # the render still closes on the template's generic cta clip + line.
+    # End-card: when asked for and one is actually available, close on the
+    # branded asset_type='cta' clip and drop the generated caption, since the
+    # card carries its own text. A template with a cta slot has that slot
+    # pointed at the card; a template without one (the reaction cuts) gets the
+    # card appended as a final segment, so the checkbox works everywhere.
+    # If no card is available, nothing changes and the render closes as before.
     slots = list(template.slots)
     suppress_cta_caption = False
     if brief.with_endcard:
-        cta_slot = next((s for s in slots if s.role == "cta"), None)
-        if cta_slot is not None:
-            probe = replace(cta_slot, asset_types=["cta"])
-            available = [c for c in eligible_candidates(db, brief, probe)
-                         if (c.get("duration_ms") or 0) >= cta_slot.min_ms]
-            if available:
+        probe = Slot(role="cta", asset_types=["cta"], min_ms=_ENDCARD_MIN_MS,
+                     preferred_ms=_ENDCARD_PREFERRED_MS, max_ms=_ENDCARD_MAX_MS,
+                     required=True, prefer_topic_match=False)
+        available = [c for c in eligible_candidates(db, brief, probe)
+                     if (c.get("duration_ms") or 0) >= _ENDCARD_MIN_MS]
+        if available:
+            if any(s.role == "cta" for s in slots):
                 slots = [replace(s, asset_types=["cta"]) if s.role == "cta" else s
                          for s in slots]
-                suppress_cta_caption = True
+            else:
+                slots = slots + [probe]
+            suppress_cta_caption = True
 
     durations = fit_durations(slots, brief.target_duration_ms)
 
     filled = []
+    chosen_by_role = {}
     used_ids, used_checksums = set(), set()
     used_places, used_subcats, used_shot_types = set(), set(), set()
     shortfall, skipped = {}, []
@@ -649,9 +680,17 @@ def select(db, brief: VideoBrief, template_dir=TEMPLATE_DIR):
         # fitted duration, so a short brief cannot admit unusable footage.
         candidates = [c for c in candidates if (c.get("duration_ms") or 0) >= slot.min_ms]
 
+        # Cohesion anchor: if this slot continues an earlier one's story, take
+        # that clip's place and food category to steer toward the same venue.
+        cohere_place = cohere_subcat = None
+        anchor = chosen_by_role.get(slot.cohere_with) if slot.cohere_with else None
+        if anchor:
+            cohere_place = (anchor.get("place_name") or "").lower() or None
+            cohere_subcat = (anchor.get("subcategory") or "").lower() or None
+
         chosen = choose_for_slot(candidates, brief, slot, used_ids,
                                  used_checksums, used_places, used_subcats, rng,
-                                 used_shot_types)
+                                 used_shot_types, cohere_place, cohere_subcat)
         if chosen is None:
             detail = {
                 "asset_types": slot.asset_types,
@@ -678,6 +717,7 @@ def select(db, brief: VideoBrief, template_dir=TEMPLATE_DIR):
         shot = shot_signal(chosen)
         if shot:
             used_shot_types.add(shot)
+        chosen_by_role[slot.role] = chosen
         filled.append((slot, chosen, take_ms))
 
     if shortfall:

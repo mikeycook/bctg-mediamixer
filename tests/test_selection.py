@@ -903,3 +903,61 @@ class TestFeatureTargeting:
         assert by_role["app_demonstration"]["asset_id"] == "UGC-00001"   # live-tracking
         assert by_role["hook_visual"]["asset_id"] in {"UGC-00010", "UGC-00011"}
         assert by_role["supporting_visual"]["asset_id"] in {"UGC-00010", "UGC-00011"}
+
+
+# ---------------------------------------------------------------------------
+# Cohesion — the interior and the dish should be one venue
+# ---------------------------------------------------------------------------
+
+def coherent_library():
+    rows = [asset(1, "app", duration_ms=9000), asset(2, "app", duration_ms=9000)]
+    pk = 10
+    for place in ["Joe", "Sal"]:
+        for sub in ["Exterior", "Interior", "Food"]:
+            rows.append(asset(pk, "broll", place_name=place, subcategory="pizza",
+                              subtype=sub, duration_ms=8000))
+            pk += 1
+    return rows
+
+
+class TestCohesion:
+    def test_the_dish_stays_with_the_venue_we_went_inside(self):
+        rows = coherent_library()
+        recipe = sel.select(FakeDb(rows), sel.VideoBrief(
+            cityid="CIT-00000000002", topic="pizza", seed="t", with_endcard=False))
+        lib = {a["id"]: a for a in rows}
+        by_role = {c["role"]: lib[c["asset_pk"]] for c in recipe["timeline"]}
+        assert by_role["destination_proof"]["place_name"] == \
+            by_role["supporting_visual"]["place_name"]
+
+    def test_falls_back_to_the_same_food_category(self):
+        # The interior is Joe's; only Sal has a dish. Different place, but the
+        # payoff is still pizza rather than an unrelated category.
+        rows = [asset(1, "app"), asset(2, "app"),
+                asset(10, "broll", place_name="Joe", subcategory="pizza", subtype="Exterior"),
+                asset(11, "broll", place_name="Joe", subcategory="pizza", subtype="Interior"),
+                asset(12, "broll", place_name="Sal", subcategory="pizza", subtype="Food"),
+                asset(13, "broll", place_name="Nao", subcategory="ramen", subtype="Food")]
+        recipe = sel.select(FakeDb(rows), sel.VideoBrief(
+            cityid="CIT-00000000002", seed="t", with_endcard=False))
+        lib = {a["id"]: a for a in rows}
+        supp = lib[[c for c in recipe["timeline"] if c["role"] == "supporting_visual"][0]["asset_pk"]]
+        assert supp["subcategory"] == "pizza"          # not the ramen dish
+
+
+class TestEndCardAppend:
+    def test_appended_when_the_template_has_no_cta_slot(self):
+        # city-discovery-reaction-v1 has no cta slot; the card is appended.
+        rows = full_library() + [endcard()]
+        brief = sel.VideoBrief(cityid="CIT-00000000002", topic="pizza",
+                               template_id="city-discovery-reaction-v1", seed="t")
+        recipe = sel.select(MoodAwareDb(rows), brief)
+        assert recipe["timeline"][-1]["role"] == "cta"
+        assert recipe["timeline"][-1]["asset_id"] == "UGC-00500"
+
+    def test_absent_when_no_card_exists(self):
+        rows = full_library()
+        brief = sel.VideoBrief(cityid="CIT-00000000002", topic="pizza",
+                               template_id="city-discovery-reaction-v1", seed="t")
+        recipe = sel.select(MoodAwareDb(rows), brief)
+        assert all(c["role"] != "cta" for c in recipe["timeline"])

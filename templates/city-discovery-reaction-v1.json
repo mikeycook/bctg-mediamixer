@@ -33,7 +33,8 @@
       "max_ms": 7000,
       "required": true,
       "prefer_topic_match": true,
-      "notes": "Moved forward: the product moment lands while attention is still high, rather than three clips in."
+      "notes": "Moved forward: the product moment lands while attention is still high, rather than three clips in.",
+      "match_feature": true
     },
     {
       "role": "reaction_beat",
@@ -47,7 +48,7 @@
       "prefer_topic_match": false,
       "city_agnostic_ok": true,
       "match_mood": true,
-      "notes": "Optional, and the only optional slot in either template. Reactions carry no city, so city_agnostic_ok is set \u2014 a city filter would exclude every one of them. match_mood restricts this to the brief's mood, read from merged emotion tags so a performance filed under two emotions is reachable by both. If nothing matches, the slot is skipped and the video is built without it."
+      "notes": "Optional, and the only optional slot in either template. Reactions carry no city, so city_agnostic_ok is set — a city filter would exclude every one of them. match_mood restricts this to the brief's mood, read from merged emotion tags so a performance filed under two emotions is reachable by both. If nothing matches, the slot is skipped and the video is built without it."
     },
     {
       "role": "destination_proof",
@@ -62,7 +63,8 @@
       "prefer_subtypes": [
         "Interior"
       ],
-      "notes": "Inside the venue \u2014 this is real and someone has been there."
+      "notes": "Inside the venue — this is real and someone has been there.",
+      "cohere_with": "hook_visual"
     },
     {
       "role": "supporting_visual",
@@ -78,7 +80,8 @@
         "Food",
         "Dish"
       ],
-      "notes": "The payoff: the dish itself."
+      "notes": "The payoff: the dish itself.",
+      "cohere_with": "destination_proof"
     }
   ],
   "captions": [

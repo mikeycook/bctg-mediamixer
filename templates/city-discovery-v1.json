@@ -33,10 +33,11 @@
       "max_ms": 6000,
       "required": true,
       "prefer_topic_match": true,
-      "notes": "Inside the venue \u2014 the shot that says this is real and someone has been there.",
+      "notes": "Inside the venue — the shot that says this is real and someone has been there.",
       "prefer_subtypes": [
         "Interior"
-      ]
+      ],
+      "cohere_with": "hook_visual"
     },
     {
       "role": "app_demonstration",
@@ -48,7 +49,8 @@
       "max_ms": 8000,
       "required": true,
       "prefer_topic_match": true,
-      "notes": "The product moment. App subtypes are features (Guide, Map), not framings, so no shot preference."
+      "notes": "The product moment. App subtypes are features (Guide, Map), not framings, so no shot preference.",
+      "match_feature": true
     },
     {
       "role": "supporting_visual",
@@ -64,7 +66,8 @@
       "prefer_subtypes": [
         "Food",
         "Dish"
-      ]
+      ],
+      "cohere_with": "destination_proof"
     },
     {
       "role": "cta",
@@ -86,7 +89,7 @@
       "pattern": "{place_name}",
       "style": "hook",
       "lead_in_ms": 200,
-      "notes": "Opens on the name of the place. Dropped entirely if place_name is blank \u2014 better no caption than an empty one."
+      "notes": "Opens on the name of the place. Dropped entirely if place_name is blank — better no caption than an empty one."
     },
     {
       "role": "destination_proof",
