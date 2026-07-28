@@ -30,6 +30,7 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import unquote
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel
@@ -433,6 +434,24 @@ def _tag(tags, *names):
     return None
 
 
+def _title_from_key(key):
+    """
+    A human title from the object key, to reconcile against YouTube.
+
+    'ugc-assets/music/Ancient%20History%20-%20Bosley.mp3' -> 'Ancient History
+    - Bosley'. Percent-decoded, anything after a '?' dropped, and the audio
+    extension removed.
+    """
+    name = key.rsplit("/", 1)[-1].split("?", 1)[0]
+    name = unquote(name)
+    low = name.lower()
+    for ext in _AUDIO_EXT:
+        if low.endswith(ext):
+            name = name[: -len(ext)]
+            break
+    return name.strip() or None
+
+
 def _probe_audio(url, timeout=60):
     """
     Facts and embedded metadata, read over the presigned URL.
@@ -519,10 +538,12 @@ def sync_music_library(db=Depends(get_db), _=Depends(require_secret)):
     an audio ffprobe reads only the header, so a duration is available the
     moment a track appears rather than waiting on a scheduled pass.
     """
-    existing = {r[0] for r in
-                (db.execute_query(
-                    "SELECT s3_key FROM public.content_library_music_tracks") or [])}
-    added, probed, listed = 0, 0, 0
+    existing = {}
+    for r in (db.execute_query(
+            "SELECT s3_key, id, title "
+            "FROM public.content_library_music_tracks") or []):
+        existing[r[0]] = {"id": r[1], "title": r[2]}
+    added, probed, retitled, listed = 0, 0, 0, 0
     try:
         for obj in _s3.list_objects(_MUSIC_PREFIX):
             key, size = obj["key"], obj["size"]
@@ -531,8 +552,19 @@ def sync_music_library(db=Depends(get_db), _=Depends(require_secret)):
             if not key.lower().endswith(_AUDIO_EXT):
                 continue
             listed += 1
-            if key in existing:
+            row = existing.get(key)
+            title = _title_from_key(key)
+
+            if row is not None:
+                # Fill the title from the filename for an already-synced track
+                # that has none. Cheap (no probe) and never overwrites an edit.
+                if title and not row["title"]:
+                    db.execute_query(
+                        "UPDATE public.content_library_music_tracks SET title = %s "
+                        "WHERE id = %s AND title IS NULL", (title, row["id"]))
+                    retitled += 1
                 continue
+
             meta = dict(_MUSIC_PROBE_DEFAULT)
             content_type = None
             try:
@@ -545,6 +577,8 @@ def sync_music_library(db=Depends(get_db), _=Depends(require_secret)):
                     probed += 1
             except Exception:
                 pass
+            # The decoded filename is the title, so it lines up with YouTube.
+            meta["title"] = title or meta.get("title")
             db.execute_query(_MUSIC_INSERT_SQL, {
                 "bucket": _BUCKET, "key": key,
                 "filename": key.rsplit("/", 1)[-1],
@@ -558,7 +592,7 @@ def sync_music_library(db=Depends(get_db), _=Depends(require_secret)):
             "SET track_id = 'MUS-' || lpad(id::text, 5, '0') WHERE track_id IS NULL")
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"S3 sync error: {str(exc)[:300]}")
-    return {"added": added, "probed": probed, "listed": listed}
+    return {"added": added, "probed": probed, "retitled": retitled, "listed": listed}
 
 
 @app.put("/admin/music-library/{track_pk}")

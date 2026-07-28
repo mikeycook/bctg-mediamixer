@@ -8,7 +8,24 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from api.main import _tag, _to_number  # noqa: E402
+from api.main import _tag, _to_number, _title_from_key  # noqa: E402
+
+
+class TestTitleFromKey:
+    def test_percent_decoded_and_extension_removed(self):
+        assert _title_from_key(
+            "ugc-assets/music/Ancient%20History%20-%20Bosley.mp3") == "Ancient History - Bosley"
+
+    def test_query_string_after_a_question_mark_is_dropped(self):
+        assert _title_from_key(
+            "ugc-assets/music/Sunny%20Days.mp3?versionId=abc123") == "Sunny Days"
+
+    def test_only_a_known_audio_extension_is_stripped(self):
+        # A dot mid-title is not an extension and must survive.
+        assert _title_from_key("ugc-assets/music/Track No. 5.wav") == "Track No. 5"
+
+    def test_plain_name_passes_through(self):
+        assert _title_from_key("ugc-assets/music/Roberta's Theme.m4a") == "Roberta's Theme"
 
 
 class TestTagLookup:
