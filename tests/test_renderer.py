@@ -88,10 +88,10 @@ class TestRecipeValidation:
 
 
 class TestFfmpegCommand:
-    def test_one_input_per_clip_plus_silence(self):
+    def test_one_input_per_clip_and_no_silence_input(self):
         args = vr.build_ffmpeg_command(recipe(), ["/tmp/a.mov", "/tmp/b.mov"], "/tmp/out.mp4")
-        assert args.count("-i") == 3          # two clips plus anullsrc
-        assert "anullsrc=channel_layout=stereo:sample_rate=48000" in args
+        assert args.count("-i") == 2          # two clips; silence is in-graph
+        assert "-i anullsrc" not in " ".join(args)
 
     def test_trim_is_applied_as_input_seeking(self):
         args = vr.build_ffmpeg_command(recipe(), ["/tmp/a.mov", "/tmp/b.mov"], "/tmp/out.mp4")
@@ -139,12 +139,16 @@ class TestFilterGraph:
         graph = vr.build_filter_graph(recipe(), [True, True])
         assert graph.count("setsar=1") == 2
 
-    def test_silent_clips_get_generated_silence(self):
-        # concat with a=1 needs both streams on every segment; a clip
-        # without audio would otherwise drop out of the graph.
+    def test_silent_clips_get_bounded_generated_silence(self):
+        # concat with a=1 needs both streams on every segment; a clip without
+        # audio gets silence generated in-graph, bounded to its own length
+        # (clip 1 here is 250->5250 = 5.000s) so its concat segment can end.
         graph = vr.build_filter_graph(recipe(), [True, False])
-        assert "[2:a]" in graph        # the anullsrc input
+        assert "anullsrc=channel_layout=stereo:sample_rate=48000:d=5.000" in graph
+        assert "[a1]" in graph
         assert "concat=n=2:v=1:a=1" in graph
+        # No shared silence input is referenced any more.
+        assert "[2:a]" not in graph
 
     def test_concat_covers_every_segment(self):
         three = [clip(1, 0, 1000, 0), clip(2, 0, 1000, 1000), clip(3, 0, 1000, 2000)]
@@ -157,11 +161,12 @@ class TestFilterGraph:
         assert "amix" not in graph
 
     def test_music_ducks_ambient_and_mixes_the_bed(self):
-        # index 3: two clips (0,1), the anullsrc silence (2), then the bed (3).
+        # index 2: two clips (0,1), then the bed (2). Silence is in-graph now,
+        # so there is no separate silence input to shift the index.
         graph = vr.build_filter_graph(recipe(), [True, True],
-                                      music={"index": 3, "gain": 0.85, "source_gain": 0.28})
+                                      music={"index": 2, "gain": 0.85, "source_gain": 0.28})
         assert "[cata]volume=0.28[abed]" in graph            # ambient ducked
-        assert "[3:a]aresample=48000" in graph and "volume=0.85[amus]" in graph
+        assert "[2:a]aresample=48000" in graph and "volume=0.85[amus]" in graph
         assert "amix=inputs=2:duration=first" in graph
         assert "[amixed]loudnorm=" in graph                  # normalized after the mix
         # amix normalize= is ffmpeg >= 4.4 only and errors the graph on 4.2.
@@ -169,14 +174,15 @@ class TestFilterGraph:
 
 
 class TestMusicCommand:
-    def test_bed_is_a_looped_input_after_the_silence_source(self):
+    def test_bed_is_the_last_input(self):
         args = vr.build_ffmpeg_command(recipe(), ["/a.mov", "/b.mov"], "/out.mp4",
                                        music_path="/bed.mp3")
         assert "-stream_loop" in args
         assert args[args.index("-stream_loop") + 1] == "-1"
-        # anullsrc precedes the bed, so the bed's input index is len+1 (=3).
-        assert args.index("anullsrc=channel_layout=stereo:sample_rate=48000") < args.index("/bed.mp3")
-        assert "[3:a]aresample=48000" in " ".join(args)
+        # No shared silence input now, so the bed follows the two clips at
+        # index 2 and the graph mixes [2:a].
+        assert "-i anullsrc" not in " ".join(args)
+        assert "[2:a]aresample=48000" in " ".join(args)
 
     def test_looped_bed_is_capped_at_the_timeline_length(self):
         # Without the cap, the infinite loop injects frames past the end and
@@ -195,14 +201,13 @@ class TestMusicCommand:
         assert "-stream_loop" not in args
         assert "amix" not in " ".join(args)
 
-    def test_silence_source_is_capped_at_the_timeline_length(self):
-        # anullsrc is infinite; without -t it injects frames past the end and
-        # ffmpeg exits 234 whenever a clip is silent. Applies with no music.
-        args = vr.build_ffmpeg_command(recipe(), ["/a.mov", "/b.mov"], "/out.mp4")
-        si = args.index("anullsrc=channel_layout=stereo:sample_rate=48000")
-        assert args[si - 1] == "-i"
-        assert args[si - 2] == "8.000"
-        assert args[si - 3] == "-t"
+    def test_no_shared_silence_input(self):
+        # Silence is generated per clip inside the filtergraph; there must be
+        # no separate anullsrc *input* (the unbounded one broke concat).
+        args = vr.build_ffmpeg_command(
+            recipe([clip(1, 0, 3000, 0), clip(2, 0, 3000, 3000)]),
+            ["/a.mov", "/b.mov"], "/out.mp4")
+        assert "-i anullsrc" not in " ".join(args)
 
 
 class TestRenderId:

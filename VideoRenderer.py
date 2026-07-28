@@ -142,9 +142,8 @@ def build_filter_graph(recipe, has_audio_flags, loudness_lufs=-14.0,
     canvas = recipe["canvas"]
     width, height, fps = canvas["width"], canvas["height"], canvas["fps"]
     parts, labels = [], []
-    silence_index = len(recipe["timeline"])
 
-    for index, _clip in enumerate(recipe["timeline"]):
+    for index, clip in enumerate(recipe["timeline"]):
         parts.append(
             f"[{index}:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
             f"crop={width}:{height},setsar=1,fps={fps},format=yuv420p[v{index}]")
@@ -152,8 +151,16 @@ def build_filter_graph(recipe, has_audio_flags, loudness_lufs=-14.0,
             parts.append(f"[{index}:a]aresample=48000,aformat="
                          f"sample_fmts=fltp:channel_layouts=stereo[a{index}]")
         else:
-            parts.append(f"[{silence_index}:a]aformat="
-                         f"sample_fmts=fltp:channel_layouts=stereo[a{index}]")
+            # Silence for a clip with no audio, generated per clip and bounded
+            # to that clip's exact length. A shared, unbounded anullsrc input
+            # cannot end its concat segment — concat waits forever for the
+            # silent segment to finish and dies at the cut ("Failed to inject
+            # frame into filter network"). The anullsrc *filter* with d= is
+            # finite and matches the video segment, so concat closes cleanly.
+            dur = (clip["source_out_ms"] - clip["source_in_ms"]) / 1000.0
+            parts.append(f"anullsrc=channel_layout=stereo:sample_rate=48000:"
+                         f"d={dur:.3f},aformat=sample_fmts=fltp:"
+                         f"channel_layouts=stereo[a{index}]")
         labels.append(f"[v{index}][a{index}]")
 
     # Text is drawn after the concat, so a caption's timing is measured
@@ -217,19 +224,14 @@ def build_ffmpeg_command(recipe, input_paths, output_path, ffmpeg="ffmpeg",
 
     total_s = (recipe.get("total_duration_ms") or 0) / 1000.0
 
-    # Silence source for clips with no audio track (screen recordings are
-    # silent). anullsrc is infinite, so — exactly like the looped music — it
-    # must be capped with -t, or it keeps producing silence after the output
-    # is done and ffmpeg dies injecting the leftover frames ("Failed to inject
-    # frame into filter network", exit 234, after the file is written).
-    args += ["-f", "lavfi"]
-    if total_s > 0:
-        args += ["-t", f"{total_s:.3f}"]
-    args += ["-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
+    # Silence for muted clips is generated inside the filtergraph now (a
+    # per-clip anullsrc bounded to the clip length), so there is no separate
+    # silence input. A shared, unbounded anullsrc input could not end its
+    # concat segment and killed the render at the cut.
 
     # Music bed, if any. -stream_loop -1 loops a track shorter than the video;
-    # -t caps the loop at the timeline length, for the same reason. Added
-    # after the clips and the silence source, so its index is len(timeline)+1.
+    # -t caps the loop at the timeline length so it can't outlive the video.
+    # The bed is the only extra input, so its index is len(timeline).
     music = None
     if music_path:
         args += ["-stream_loop", "-1"]
@@ -237,7 +239,7 @@ def build_ffmpeg_command(recipe, input_paths, output_path, ffmpeg="ffmpeg",
             args += ["-t", f"{total_s:.3f}"]
         args += ["-i", music_path]
         music = {
-            "index": len(timeline) + 1,
+            "index": len(timeline),
             "gain": (music_mix or {}).get("gain", 0.85),
             "source_gain": (music_mix or {}).get("source_gain", 0.28),
         }
