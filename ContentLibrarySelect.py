@@ -653,15 +653,19 @@ def select(db, brief: VideoBrief, template_dir=TEMPLATE_DIR):
     slots = list(template.slots)
     suppress_cta_caption = False
     if brief.with_endcard:
+        # city_agnostic_ok: a brand end-card is cross-city by nature, so it
+        # need not be tagged city_agnostic or match the brief's city — that
+        # was the most common reason a perfectly good card was excluded.
         probe = Slot(role="cta", asset_types=["cta"], min_ms=_ENDCARD_MIN_MS,
                      preferred_ms=_ENDCARD_PREFERRED_MS, max_ms=_ENDCARD_MAX_MS,
-                     required=True, prefer_topic_match=False)
+                     required=True, prefer_topic_match=False,
+                     city_agnostic_ok=True)
         available = [c for c in eligible_candidates(db, brief, probe)
                      if (c.get("duration_ms") or 0) >= _ENDCARD_MIN_MS]
         if available:
             if any(s.role == "cta" for s in slots):
-                slots = [replace(s, asset_types=["cta"]) if s.role == "cta" else s
-                         for s in slots]
+                slots = [replace(s, asset_types=["cta"], city_agnostic_ok=True)
+                         if s.role == "cta" else s for s in slots]
             else:
                 slots = slots + [probe]
             suppress_cta_caption = True

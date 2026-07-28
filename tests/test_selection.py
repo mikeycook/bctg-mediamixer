@@ -772,6 +772,16 @@ class TestEndCard:
         assert cta["asset_id"] != "UGC-00500"
         assert any(spec["role"] == "cta" for spec in recipe["caption_specs"])
 
+    def test_a_card_for_another_city_and_not_agnostic_is_still_used(self):
+        # Brand cards are cross-city: a cta clip tagged to Tokyo, not marked
+        # city_agnostic, still closes a New York video.
+        rows = full_library() + [asset(500, "cta", city_agnostic=False,
+                                       cityid="CIT-TOKYO", city_slug="tokyo",
+                                       duration_ms=3000)]
+        recipe = sel.select(FakeDb(rows), NY)
+        assert recipe["timeline"][-1]["role"] == "cta"
+        assert recipe["timeline"][-1]["asset_id"] == "UGC-00500"
+
 
 # ---------------------------------------------------------------------------
 # Neighborhood scoping
