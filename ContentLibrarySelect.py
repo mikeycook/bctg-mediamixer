@@ -24,7 +24,7 @@ import hashlib
 import json
 import os
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -86,6 +86,11 @@ class VideoBrief:  # noqa: D101
     # Pin a specific track by its MUS-id instead of choosing. Must still be
     # active and commercially cleared, or selection falls back to choosing.
     music_track_id: Optional[str] = None
+    # Close on the branded end-card: an active asset_type='cta' clip, if one
+    # exists. When it does, it fills the cta slot and the generated CTA text
+    # is dropped, because the card carries its own. Falls back to the
+    # template's generic cta clip + generated line when no card is available.
+    with_endcard: bool = True
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]):
@@ -102,6 +107,7 @@ class VideoBrief:  # noqa: D101
             mood=(data.get("mood") or None),
             with_music=bool(data.get("with_music", True)),
             music_track_id=(data.get("music_track_id") or None),
+            with_endcard=bool(data.get("with_endcard", True)),
             prefer_unused=bool(data.get("prefer_unused", True)),
             caption_overrides={k: str(v) for k, v in
                                (data.get("caption_overrides") or {}).items()
@@ -565,14 +571,32 @@ def select(db, brief: VideoBrief, template_dir=TEMPLATE_DIR):
     """
     template = load_template(brief.template_id, template_dir)
     rng = _rng(brief)
-    durations = fit_durations(template.slots, brief.target_duration_ms)
+
+    # End-card: when asked for and one is actually available, point the cta
+    # slot at asset_type='cta' and drop its generated caption, since the card
+    # carries its own text. If none is available, leave the slot untouched so
+    # the render still closes on the template's generic cta clip + line.
+    slots = list(template.slots)
+    suppress_cta_caption = False
+    if brief.with_endcard:
+        cta_slot = next((s for s in slots if s.role == "cta"), None)
+        if cta_slot is not None:
+            probe = replace(cta_slot, asset_types=["cta"])
+            available = [c for c in eligible_candidates(db, brief, probe)
+                         if (c.get("duration_ms") or 0) >= cta_slot.min_ms]
+            if available:
+                slots = [replace(s, asset_types=["cta"]) if s.role == "cta" else s
+                         for s in slots]
+                suppress_cta_caption = True
+
+    durations = fit_durations(slots, brief.target_duration_ms)
 
     filled = []
     used_ids, used_checksums = set(), set()
     used_places, used_subcats, used_shot_types = set(), set(), set()
     shortfall, skipped = {}, []
 
-    for slot, take_ms in zip(template.slots, durations):
+    for slot, take_ms in zip(slots, durations):
         candidates = eligible_candidates(db, brief, slot)
         # A slot needs a clip at least as long as its own minimum, not the
         # fitted duration, so a short brief cannot admit unusable footage.
@@ -622,6 +646,9 @@ def select(db, brief: VideoBrief, template_dir=TEMPLATE_DIR):
         )
 
     recipe = build_recipe(brief, template, filled)
+    if suppress_cta_caption:
+        recipe["caption_specs"] = [c for c in recipe.get("caption_specs", [])
+                                   if c.get("role") != "cta"]
     if brief.with_music:
         track = choose_music(db, brief, rng)
         if track:

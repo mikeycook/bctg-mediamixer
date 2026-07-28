@@ -728,3 +728,39 @@ class TestMusicBed:
         a = sel.select(MusicDb(full_library(), tracks), NY)
         b = sel.select(MusicDb(full_library(), tracks), NY)
         assert a["music"][0]["track_id"] == b["music"][0]["track_id"]
+
+
+# ---------------------------------------------------------------------------
+# Branded end-card
+# ---------------------------------------------------------------------------
+
+def endcard(pk=500):
+    # A city-agnostic cta asset long enough for the cta slot (>= 2s).
+    return asset(pk, "cta", city_agnostic=True, cityid=None, city_slug=None,
+                 duration_ms=3000, place_name=None, subcategory=None)
+
+
+class TestEndCard:
+    def test_the_card_fills_the_cta_slot_and_drops_its_caption(self):
+        rows = full_library() + [endcard()]
+        recipe = sel.select(MoodAwareDb(rows), NY)          # with_endcard defaults True
+        cta = [c for c in recipe["timeline"] if c["role"] == "cta"][0]
+        assert cta["asset_id"] == "UGC-00500"
+        assert all(spec["role"] != "cta" for spec in recipe["caption_specs"])
+
+    def test_falls_back_when_no_card_is_available(self):
+        # No cta asset in the library: the cta slot uses a generic clip and
+        # the generated line is kept, exactly as before the feature.
+        recipe = sel.select(MoodAwareDb(full_library()), NY)
+        cta = [c for c in recipe["timeline"] if c["role"] == "cta"][0]
+        assert cta["asset_id"] != "UGC-00500"
+        assert any(spec["role"] == "cta" for spec in recipe["caption_specs"])
+
+    def test_toggling_it_off_ignores_the_card(self):
+        rows = full_library() + [endcard()]
+        brief = sel.VideoBrief(cityid="CIT-00000000002", topic="pizza",
+                               seed="test", with_endcard=False)
+        recipe = sel.select(MoodAwareDb(rows), brief)
+        cta = [c for c in recipe["timeline"] if c["role"] == "cta"][0]
+        assert cta["asset_id"] != "UGC-00500"
+        assert any(spec["role"] == "cta" for spec in recipe["caption_specs"])
