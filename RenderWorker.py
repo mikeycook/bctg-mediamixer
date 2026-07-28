@@ -313,8 +313,11 @@ def download_music(s3, recipe, workdir):
 
 _FFMPEG_ERROR_HINTS = (
     "error", "invalid", "unable", "no such", "failed", "cannot", "denied",
-    "not found", "does not", "no space", "out of memory", "killed",
-    "conversion failed", "buffer", "overflow", "matches no streams",
+    "not found", "does not", "do not match", "does not match", "no space",
+    "out of memory", "killed", "conversion failed", "buffer", "overflow",
+    "matches no streams", "not supported", "parameters", "properties",
+    "pixel format", "sample rate", "channel layout", "[parsed_", "[swscaler",
+    "changing", "reinit", "deprecated pixel format",
 )
 
 
@@ -323,13 +326,16 @@ def _ffmpeg_error(code, stderr):
     The informative part of an ffmpeg failure.
 
     ffmpeg ends with libx264's statistics even on some failures, so the tail
-    is often useless. Pull the lines that name a cause; fall back to the tail
-    only when none are found.
+    is often useless. Pull the lines that name a cause — including the filter
+    context ("[Parsed_concat_5] Input link parameters ... do not match ...")
+    that sits just above the generic 'Error while filtering', which is what
+    actually says *which* input is wrong. Fall back to the tail only when
+    nothing matches.
     """
     lines = [ln.strip() for ln in (stderr or "").splitlines() if ln.strip()]
     flagged = [ln for ln in lines
                if any(h in ln.lower() for h in _FFMPEG_ERROR_HINTS)]
-    detail = " | ".join(flagged[-6:]) if flagged else (stderr or "")[-800:]
+    detail = " | ".join(flagged[-12:]) if flagged else (stderr or "")[-1200:]
     return f"ffmpeg exited {code}: {detail}"
 
 
