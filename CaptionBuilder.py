@@ -39,10 +39,15 @@ from typing import Dict, List, Optional
 SAFE_TOP = 0.10
 SAFE_BOTTOM = 0.78
 
-# Rough advance width per character at a given font size, for a condensed
-# sans. Only used to decide line breaks, so being a little conservative
-# costs nothing and overflowing costs the shot.
-CHAR_WIDTH_RATIO = 0.50
+# Horizontal safe margin on each side. A caption is centered on its text
+# width, so without this a wide line touches — or crosses — the frame edge.
+SAFE_SIDE = 0.06
+
+# Rough advance width per character at a given font size, for the bold sans
+# drawtext uses. Deliberately on the wide side: over-estimating only forces
+# an earlier line break, which costs nothing, whereas under-estimating lets
+# a line run off the frame, which costs the shot.
+CHAR_WIDTH_RATIO = 0.60
 
 STYLES = {
     "hook": {
@@ -184,6 +189,34 @@ def plan_captions(recipe, assets_by_pk, caption_specs, city_name=None,
     return plan
 
 
+def _widest_line_px(lines, font_px):
+    return max((len(line) * font_px * CHAR_WIDTH_RATIO for line in lines),
+               default=0.0)
+
+
+def fit_caption(text, canvas, style):
+    """
+    Chooses a font size and line breaks so the text stays inside the frame.
+
+    drawtext neither wraps nor shrinks on its own, so both are decided here.
+    The usable width is the frame minus the side safe margins; the box border
+    eats into it too, and it scales with the font, so it is part of the
+    budget. Wrap to that width, and if the widest line still would not fit —
+    a place name longer than the column, which wrap_text leaves whole rather
+    than chop — step the size down until it does. Returns (font_px, lines).
+    """
+    usable = canvas["width"] * (1 - 2 * SAFE_SIDE)
+    font_px = max(12, int(canvas["height"] * style["font_size_ratio"]))
+    while True:
+        border = int(font_px * 0.35)
+        avail = max(1.0, usable - 2 * border)
+        max_chars = max(4, int(avail / (font_px * CHAR_WIDTH_RATIO)))
+        lines = wrap_text(text, max_chars)[: style["max_lines"]]
+        if _widest_line_px(lines, font_px) + 2 * border <= usable or font_px <= 12:
+            return font_px, lines
+        font_px = max(12, int(font_px * 0.92))
+
+
 def write_caption_files(captions, workdir, canvas):
     """
     Writes each caption's wrapped text to its own file.
@@ -194,9 +227,7 @@ def write_caption_files(captions, workdir, canvas):
     written = []
     for index, caption in enumerate(captions):
         style = STYLES.get(caption.style, STYLES["label"])
-        font_px = max(12, int(canvas["height"] * style["font_size_ratio"]))
-        max_chars = max(8, int(canvas["width"] / (font_px * CHAR_WIDTH_RATIO)))
-        lines = wrap_text(caption.text, max_chars)[: style["max_lines"]]
+        font_px, lines = fit_caption(caption.text, canvas, style)
 
         path = os.path.join(workdir, f"caption{index:02d}.txt")
         with open(path, "w", encoding="utf-8") as handle:
