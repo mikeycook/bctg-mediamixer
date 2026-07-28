@@ -56,14 +56,14 @@ _s3 = S3Interpreter(_BUCKET, region=_REGION)
 # can be activated through the tab that already exists, rather than needing
 # new UI before anything can become eligible.
 _EDITABLE = {
-    "asset_id", "place_name", "cityid", "country", "type", "subtype",
-    "category", "subcategory", "duration", "hook_compatibility", "notes",
-    "status", "rights_status", "rights_source", "city_agnostic",
+    "asset_id", "place_name", "cityid", "country", "neighborhood", "type",
+    "subtype", "category", "subcategory", "duration", "hook_compatibility",
+    "notes", "status", "rights_status", "rights_source", "city_agnostic",
     "shot_type", "camera_motion", "time_of_day", "quality_score",
 }
 
 _OPTION_FIELDS = ("type", "subtype", "category", "subcategory", "country",
-                  "asset_type", "status", "rights_status")
+                  "neighborhood", "asset_type", "status", "rights_status")
 
 
 def require_secret(x_admin_secret: Optional[str] = Header(None)):

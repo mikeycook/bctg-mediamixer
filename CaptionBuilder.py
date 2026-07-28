@@ -131,6 +131,7 @@ def facts_for_clip(clip, asset, city_name=None):
         "category": asset.get("category"),
         "subcategory": asset.get("subcategory"),
         "subtype": asset.get("subtype"),
+        "neighborhood": asset.get("neighborhood"),
         "city": city_name,
         "role": clip.get("role"),
     }
@@ -338,7 +339,7 @@ def plan_for_recipe(db, recipe, overrides=None):
 
     rows = db.execute_query_as_dict("""
         SELECT a.id, a.place_name, a.category, a.subcategory, a.subtype,
-               c.cityname
+               a.neighborhood, c.cityname
         FROM public.content_library_assets a
         LEFT JOIN public.cities_reference c ON c.cityid = a.cityid
         WHERE a.id = ANY(%(pks)s)

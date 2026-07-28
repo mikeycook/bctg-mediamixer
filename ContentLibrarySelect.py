@@ -63,6 +63,10 @@ class VideoBrief:  # noqa: D101
     cityid: Optional[str] = None
     city_slug: Optional[str] = None
     topic: Optional[str] = None
+    # Scope a render below the city. Applies to slots that opt in with
+    # match_neighborhood; other slots (the app feature, the brand card) ignore
+    # it, so a neighborhood video still carries its non-geographic pieces.
+    neighborhood: Optional[str] = None
     template_id: str = "city-discovery-v1"
     target_duration_ms: int = 20000
     platforms: Tuple[str, ...] = ("instagram-reels",)
@@ -98,6 +102,7 @@ class VideoBrief:  # noqa: D101
             cityid=data.get("cityid") or data.get("city_id"),
             city_slug=data.get("city_slug"),
             topic=data.get("topic"),
+            neighborhood=(data.get("neighborhood") or None),
             template_id=data.get("template_id", "city-discovery-v1"),
             target_duration_ms=int(data.get("target_duration_ms", 20000)),
             platforms=tuple(data.get("platforms", ("instagram-reels",))),
@@ -132,6 +137,11 @@ class Slot:
     # When true and the brief carries a mood, restrict this slot to assets
     # tagged with that emotion.
     match_mood: bool = False
+    # When true and the brief carries a neighborhood, restrict this slot to
+    # clips in it — a hard geographic filter, for feature videos scoped below
+    # the city. Set on the geographic (b-roll) slots of a neighborhood
+    # template; left off on app and cta slots, which have no neighborhood.
+    match_neighborhood: bool = False
     # Emotions this slot accepts, independent of the brief. Set when a
     # template wants a specific arc — intrigue early, delight later — which
     # a single brief-level mood cannot express. Takes precedence over
@@ -173,7 +183,7 @@ def load_template(template_id, template_dir=TEMPLATE_DIR):
 ELIGIBLE_SQL = """
 SELECT id, asset_id, s3_key, s3_version_id, checksum_sha256, asset_type,
        category, subcategory, subtype, place_name, cityid, city_slug,
-       city_agnostic, duration_ms, width, height, orientation, has_audio,
+       neighborhood, city_agnostic, duration_ms, width, height, orientation, has_audio,
        frame_rate, quality_score, hook_compatibility, shot_type, last_seen_at,
        (SELECT count(*) FROM public.content_library_render_assets ra
         JOIN public.content_library_renders r ON r.id = ra.render_id
@@ -239,6 +249,10 @@ def eligible_candidates(db, brief: VideoBrief, slot: Slot):
               WHERE at.asset_id = public.content_library_assets.id
                 AND t.namespace = 'emotion' AND t.slug = %(mood)s)"""
         params["mood"] = brief.mood.strip().lower()
+
+    if slot.match_neighborhood and brief.neighborhood:
+        sql += " AND lower(neighborhood) = lower(%(neighborhood)s)"
+        params["neighborhood"] = brief.neighborhood.strip()
 
     rows = db.execute_query_as_dict(sql, params)
     rows = rows if isinstance(rows, list) else []

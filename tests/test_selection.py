@@ -49,6 +49,9 @@ class FakeDb:
             if "city_slug" in params and not (
                     row.get("city_slug") == params["city_slug"] or row.get("city_agnostic")):
                 continue
+            if "neighborhood" in params and (
+                    (row.get("neighborhood") or "").lower() != params["neighborhood"].lower()):
+                continue
             out.append(dict(row))
         return out
 
@@ -59,6 +62,7 @@ def asset(pk, asset_type, **kw):
         "s3_version_id": None, "checksum_sha256": f"sha{pk}", "asset_type": asset_type,
         "category": None, "subcategory": None, "place_name": None,
         "cityid": "CIT-00000000002", "city_slug": "new-york", "city_agnostic": False,
+        "neighborhood": None,
         "duration_ms": 9000, "width": 1080, "height": 1920, "orientation": "portrait",
         "has_audio": True, "frame_rate": 30, "quality_score": None,
         "hook_compatibility": None, "shot_type": None, "last_seen_at": None,
@@ -764,3 +768,76 @@ class TestEndCard:
         cta = [c for c in recipe["timeline"] if c["role"] == "cta"][0]
         assert cta["asset_id"] != "UGC-00500"
         assert any(spec["role"] == "cta" for spec in recipe["caption_specs"])
+
+
+# ---------------------------------------------------------------------------
+# Neighborhood scoping
+# ---------------------------------------------------------------------------
+
+class TestNeighborhoodEligibility:
+    def test_match_neighborhood_slot_filters_to_the_brief_area(self):
+        rows = [asset(1, "broll", neighborhood="Chelsea"),
+                asset(2, "broll", neighborhood="SoHo"),
+                asset(3, "broll", neighborhood=None)]
+        slot = sel.Slot(role="hook_visual", asset_types=["broll"], min_ms=0,
+                        preferred_ms=2500, max_ms=3000, match_neighborhood=True)
+        brief = sel.VideoBrief(cityid="CIT-00000000002", neighborhood="chelsea")
+        got = {c["id"] for c in sel.eligible_candidates(FakeDb(rows), brief, slot)}
+        assert got == {1}                     # case-insensitive; SoHo and NULL excluded
+
+    def test_a_slot_that_does_not_opt_in_ignores_the_neighborhood(self):
+        rows = [asset(1, "broll", neighborhood="Chelsea"),
+                asset(2, "broll", neighborhood="SoHo")]
+        slot = sel.Slot(role="supporting_visual", asset_types=["broll"], min_ms=0,
+                        preferred_ms=4000, max_ms=5000, match_neighborhood=False)
+        brief = sel.VideoBrief(cityid="CIT-00000000002", neighborhood="Chelsea")
+        got = {c["id"] for c in sel.eligible_candidates(FakeDb(rows), brief, slot)}
+        assert got == {1, 2}
+
+    def test_no_brief_neighborhood_means_no_filter(self):
+        rows = [asset(1, "broll", neighborhood="Chelsea"),
+                asset(2, "broll", neighborhood="SoHo")]
+        slot = sel.Slot(role="hook_visual", asset_types=["broll"], min_ms=0,
+                        preferred_ms=2500, max_ms=3000, match_neighborhood=True)
+        brief = sel.VideoBrief(cityid="CIT-00000000002")   # no neighborhood
+        got = {c["id"] for c in sel.eligible_candidates(FakeDb(rows), brief, slot)}
+        assert got == {1, 2}
+
+
+class TestNeighborhoodTemplate:
+    def library(self):
+        return [
+            asset(1, "app", duration_ms=9000),
+            asset(2, "app", duration_ms=9000),
+            asset(10, "broll", neighborhood="Chelsea", duration_ms=9000,
+                  place_name="Taqueria A", subcategory="tacos"),
+            asset(11, "broll", neighborhood="Chelsea", duration_ms=9000,
+                  place_name="Taqueria B", subcategory="tacos"),
+            asset(12, "broll", neighborhood="SoHo", duration_ms=9000,
+                  place_name="Elsewhere", subcategory="tacos"),
+        ]
+
+    def test_broll_scopes_to_the_neighborhood_but_app_does_not(self):
+        brief = sel.VideoBrief(cityid="CIT-00000000002",
+                               template_id="neighborhood-feature-v1",
+                               neighborhood="Chelsea", with_endcard=False, seed="t")
+        recipe = sel.select(FakeDb(self.library()), brief)
+        by_role = {c["role"]: c for c in recipe["timeline"]}
+        # Both b-roll slots came from Chelsea; the SoHo clip was never eligible.
+        assert by_role["hook_visual"]["asset_id"] in {"UGC-00010", "UGC-00011"}
+        assert by_role["supporting_visual"]["asset_id"] in {"UGC-00010", "UGC-00011"}
+        # The app moment is unaffected by the neighborhood filter.
+        assert by_role["app_demonstration"]["asset_id"] in {"UGC-00001", "UGC-00002"}
+
+    def test_no_local_footage_fails_the_neighborhood_slots(self):
+        # Only SoHo b-roll available for a Chelsea brief: the required
+        # neighborhood slots cannot fill, and the brief fails rather than
+        # borrowing another neighborhood's footage.
+        rows = [asset(1, "app"), asset(2, "app"),
+                asset(12, "broll", neighborhood="SoHo")]
+        brief = sel.VideoBrief(cityid="CIT-00000000002",
+                               template_id="neighborhood-feature-v1",
+                               neighborhood="Chelsea", seed="t")
+        with pytest.raises(sel.SelectionError) as excinfo:
+            sel.select(FakeDb(rows), brief)
+        assert "hook_visual" in excinfo.value.diagnostics["unfilled_slots"]
