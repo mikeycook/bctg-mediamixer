@@ -36,6 +36,11 @@ ProtectSystem=strict
 ProtectHome=true
 ReadOnlyPaths=/opt/mediamixer
 
+# Create the scratch dir (owned by the service user) before the sandbox is
+# applied. The '+' runs it with full privileges outside the mount namespace,
+# so it succeeds even though /opt/mediamixer is read-only here.
+ExecStartPre=+/usr/bin/install -d -o ubuntu -g ubuntu -m 0775 /opt/mediamixer/scratch
+
 # ProtectSystem=strict makes the whole tree read-only, including the
 # scratch mount, despite it being chowned to ubuntu. Without this the
 # render fails on a permission error pointing at a directory that looks

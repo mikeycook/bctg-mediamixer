@@ -33,6 +33,13 @@ ExecStart=/opt/mediamixer/venv/bin/uvicorn api.main:app \
 Restart=on-failure
 RestartSec=5s
 
+# Guarantee the scratch dir exists and is owned by the service user before
+# the sandbox is applied. The '+' runs it with full privileges outside the
+# mount namespace, so it works despite /opt/mediamixer being read-only here;
+# ReadWritePaths then bind-mounts the now-existing dir read-write. Without
+# this the API's pre-flight 503s when the dir is missing or root-owned.
+ExecStartPre=+/usr/bin/install -d -o ubuntu -g ubuntu -m 0775 /opt/mediamixer/scratch
+
 # The API itself only reads the database and presigns URLs. But it spawns
 # RenderWorker for browser-started renders, and a subprocess inherits this
 # sandbox — so without ReadWritePaths the worker dies creating its working
