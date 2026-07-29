@@ -356,6 +356,11 @@ def update_content_library(asset_pk: int, body: ContentLibraryUpdate,
         return {"ok": True}
     if "hook_compatibility" in values:
         values["hook_compatibility"] = _parse_hooks(values["hook_compatibility"])
+    if "quality_score" in values:
+        # A SMALLINT column; the grid sends a string. Blank clears it, and a
+        # value is clamped to 1..5 so a stray entry can't poison scoring.
+        raw = _to_number(values["quality_score"], int)
+        values["quality_score"] = None if raw is None else max(1, min(5, raw))
 
     assignments = ", ".join(f"{_quote_ident(k)} = %({k})s" for k in values)
     result = db.execute_query(
