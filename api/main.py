@@ -972,6 +972,7 @@ def render_alternatives(render_id: str, sequence_no: int = Query(...),
             "checksum_sha256": cand.get("checksum_sha256"),
             "duration_ms": cand.get("duration_ms"),
             "place_name": cand.get("place_name"), "subcategory": cand.get("subcategory"),
+            "notes": cand.get("notes"),
             "preview_url": preview,
         })
     return {"role": clip.get("role"), "take_ms": take_ms, "alternatives": out}
@@ -983,6 +984,9 @@ def list_renders(limit: int = Query(25, ge=1, le=200), db=Depends(get_db),
     rows = _rows_as_dicts(db, """
         SELECT r.id, r.render_id, r.state, r.environment, r.cityid, r.topic,
                r.template_id, r.target_duration_ms, r.actual_duration_ms,
+               r.brief->>'neighborhoods' AS neighborhoods,
+               r.brief->>'mood' AS mood,
+               r.brief->>'feature' AS feature,
                r.error_code, r.error_detail, r.created_at, r.completed_at,
                c.cityname,
                (SELECT count(*) FROM public.content_library_render_artifacts a

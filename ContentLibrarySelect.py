@@ -222,7 +222,7 @@ def load_template(template_id, template_dir=TEMPLATE_DIR):
 
 ELIGIBLE_SQL = """
 SELECT id, asset_id, s3_key, s3_version_id, checksum_sha256, asset_type,
-       category, subcategory, subtype, place_name, cityid, city_slug,
+       category, subcategory, subtype, place_name, notes, cityid, city_slug,
        neighborhood, city_agnostic, duration_ms, width, height, orientation, has_audio,
        frame_rate, quality_score, hook_compatibility, shot_type, last_seen_at,
        (SELECT count(*) FROM public.content_library_render_assets ra
@@ -539,6 +539,10 @@ def build_recipe(brief, template, filled):
         "brief": {
             "cityid": brief.cityid, "city_slug": brief.city_slug,
             "topic": brief.topic, "mood": brief.mood,
+            # Stored as a comma string: displays directly and VideoBrief.from_dict
+            # parses it straight back for an edited re-render.
+            "neighborhoods": ", ".join(brief.neighborhoods),
+            "feature": brief.feature,
             "platforms": list(brief.platforms),
             "target_duration_ms": brief.target_duration_ms,
             "environment": brief.environment, "seed": brief.seed,
