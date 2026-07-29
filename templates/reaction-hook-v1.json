@@ -39,7 +39,7 @@
       ],
       "min_ms": 5000,
       "preferred_ms": 6500,
-      "max_ms": 8000,
+      "max_ms": 12000,
       "required": true,
       "prefer_topic_match": false,
       "match_feature": true

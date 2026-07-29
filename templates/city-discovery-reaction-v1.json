@@ -30,7 +30,7 @@
       ],
       "min_ms": 5000,
       "preferred_ms": 6000,
-      "max_ms": 7000,
+      "max_ms": 12000,
       "required": true,
       "prefer_topic_match": true,
       "notes": "Moved forward: the product moment lands while attention is still high, rather than three clips in.",
