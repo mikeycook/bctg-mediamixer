@@ -1,0 +1,91 @@
+{
+  "template_id": "neighborhood-feature-reaction-v1",
+  "version": 1,
+  "description": "Neighborhood feature with a reaction beat. Establish the area with a local exterior, demonstrate the app feature, land an optional reaction, pay off with another local shot, close. B-roll slots scope to the brief's neighborhood; the app slot to the brief's feature; the reaction to the brief's mood (skipped if none matches). Set Neighborhood, Feature, and Mood on the brief.",
+  "canvas": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30
+  },
+  "slots": [
+    {
+      "role": "hook_visual",
+      "asset_types": ["broll"],
+      "min_ms": 2000,
+      "preferred_ms": 2500,
+      "max_ms": 3000,
+      "required": true,
+      "prefer_topic_match": true,
+      "match_neighborhood": true,
+      "prefer_subtypes": ["Exterior"],
+      "notes": "Establish the neighborhood. Exterior preferred so it opens on place."
+    },
+    {
+      "role": "app_demonstration",
+      "asset_types": ["app"],
+      "min_ms": 5000,
+      "preferred_ms": 6500,
+      "max_ms": 12000,
+      "required": true,
+      "prefer_topic_match": true,
+      "match_feature": true,
+      "notes": "The feature moment. match_feature scopes it to the brief's feature (subtype). No neighborhood match: app clips are not geographic."
+    },
+    {
+      "role": "reaction_beat",
+      "asset_types": ["reaction"],
+      "min_ms": 2000,
+      "preferred_ms": 3000,
+      "max_ms": 4000,
+      "required": false,
+      "prefer_topic_match": false,
+      "city_agnostic_ok": true,
+      "match_mood": true,
+      "notes": "Optional. Reactions carry no city or neighborhood, so city_agnostic_ok is set. match_mood restricts it to the brief's mood from merged emotion tags. Skipped and the video built without it if nothing matches."
+    },
+    {
+      "role": "supporting_visual",
+      "asset_types": ["broll"],
+      "min_ms": 3000,
+      "preferred_ms": 4000,
+      "max_ms": 5000,
+      "required": true,
+      "prefer_topic_match": true,
+      "match_neighborhood": true,
+      "cohere_with": "hook_visual",
+      "notes": "Another shot in the neighborhood — the local payoff."
+    },
+    {
+      "role": "cta",
+      "asset_types": ["app", "broll"],
+      "min_ms": 2000,
+      "preferred_ms": 2500,
+      "max_ms": 3000,
+      "required": true,
+      "prefer_topic_match": false,
+      "notes": "Background for the call-to-action text, or the branded end-card when with_endcard is on."
+    }
+  ],
+  "captions": [
+    {
+      "role": "hook_visual",
+      "pattern": "{neighborhood}",
+      "style": "hook",
+      "lead_in_ms": 200,
+      "notes": "Opens on the neighborhood name. Dropped if the clip has no neighborhood."
+    },
+    {
+      "role": "supporting_visual",
+      "pattern": "{subcategory} in {neighborhood}",
+      "style": "label",
+      "lead_in_ms": 400
+    },
+    {
+      "role": "cta",
+      "pattern": "Find it in Big City Travel Guide",
+      "style": "cta",
+      "lead_in_ms": 100,
+      "notes": "Fixed copy. Suppressed automatically when the branded end-card fills this slot."
+    }
+  ]
+}

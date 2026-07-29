@@ -1001,3 +1001,40 @@ class TestEndCardRotation:
             self._outro(500, use_count=counts["UGC-00500"]),
             self._outro(501, use_count=counts["UGC-00501"])]), NY)
         assert second["timeline"][-1]["asset_id"] != used_first
+
+
+class TestNeighborhoodReactionTemplate:
+    def _lib(self):
+        return [
+            asset(1, "app", subtype="navigation", duration_ms=9000),
+            asset(2, "app", duration_ms=9000),  # spare for the cta background
+            asset(10, "broll", neighborhood="Gramercy Park", subcategory="tacos",
+                  subtype="Exterior", place_name="A", duration_ms=9000),
+            asset(11, "broll", neighborhood="Gramercy Park", subcategory="tacos",
+                  place_name="B", duration_ms=9000),
+        ]
+
+    def test_builds_with_a_matching_reaction(self):
+        rows = self._lib() + [asset(20, "reaction", emotions=["surprised"],
+                                    city_agnostic=True, cityid=None, city_slug=None,
+                                    duration_ms=5000)]
+        brief = sel.VideoBrief(cityid="CIT-00000000002",
+                               template_id="neighborhood-feature-reaction-v1",
+                               neighborhoods=("Gramercy Park",), feature="navigation",
+                               mood="surprised", with_endcard=False, seed="t")
+        recipe = sel.select(MoodAwareDb(rows), brief)
+        by_role = {c["role"]: c for c in recipe["timeline"]}
+        assert "reaction_beat" in by_role
+        assert by_role["app_demonstration"]["asset_id"] == "UGC-00001"
+        assert by_role["hook_visual"]["asset_id"] in {"UGC-00010", "UGC-00011"}
+
+    def test_reaction_is_optional(self):
+        # No mood / no reaction footage: the beat is skipped, video still made.
+        brief = sel.VideoBrief(cityid="CIT-00000000002",
+                               template_id="neighborhood-feature-reaction-v1",
+                               neighborhoods=("Gramercy Park",), feature="navigation",
+                               with_endcard=False, seed="t")
+        recipe = sel.select(MoodAwareDb(self._lib()), brief)
+        roles = [c["role"] for c in recipe["timeline"]]
+        assert "reaction_beat" not in roles
+        assert recipe.get("skipped_optional_slots") == ["reaction_beat"]
