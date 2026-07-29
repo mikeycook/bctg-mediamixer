@@ -631,6 +631,19 @@ def attach_music(recipe, track):
     }
 
 
+def _pick_endcard(candidates, rng):
+    """
+    Choose a brand outro, rotating so every card in the cta folder gets used
+    rather than the same one every time. Fewest successful uses first — that
+    is what spreads them across a run of videos — with the seeded rng breaking
+    ties. A single card just always wins, unchanged.
+    """
+    least = min((c.get("use_count") or 0) for c in candidates)
+    pool = sorted((c for c in candidates if (c.get("use_count") or 0) == least),
+                  key=lambda c: c["id"])
+    return rng.choice(pool)
+
+
 def select(db, brief: VideoBrief, template_dir=TEMPLATE_DIR):
     """
     Produces a recipe, or raises SelectionError with a code from the design
@@ -652,6 +665,7 @@ def select(db, brief: VideoBrief, template_dir=TEMPLATE_DIR):
     # If no card is available, nothing changes and the render closes as before.
     slots = list(template.slots)
     suppress_cta_caption = False
+    pinned = {}
     if brief.with_endcard:
         # city_agnostic_ok: a brand end-card is cross-city by nature, so it
         # need not be tagged city_agnostic or match the brief's city — that
@@ -663,6 +677,9 @@ def select(db, brief: VideoBrief, template_dir=TEMPLATE_DIR):
         available = [c for c in eligible_candidates(db, brief, probe)
                      if (c.get("duration_ms") or 0) >= _ENDCARD_MIN_MS]
         if available:
+            # Rotate through every cta card so both get used. A separate rng
+            # seeded from the brief keeps this from perturbing the clip draws.
+            pinned["cta"] = _pick_endcard(available, _rng(brief))
             if any(s.role == "cta" for s in slots):
                 slots = [replace(s, asset_types=["cta"], city_agnostic_ok=True)
                          if s.role == "cta" else s for s in slots]
@@ -679,22 +696,29 @@ def select(db, brief: VideoBrief, template_dir=TEMPLATE_DIR):
     shortfall, skipped = {}, []
 
     for slot, take_ms in zip(slots, durations):
-        candidates = eligible_candidates(db, brief, slot)
-        # A slot needs a clip at least as long as its own minimum, not the
-        # fitted duration, so a short brief cannot admit unusable footage.
-        candidates = [c for c in candidates if (c.get("duration_ms") or 0) >= slot.min_ms]
+        # A pre-chosen clip for this role (the rotated brand outro) fills the
+        # slot directly, bypassing scoring.
+        if slot.role in pinned:
+            chosen = pinned[slot.role]
+            candidates = [chosen]
+        else:
+            candidates = eligible_candidates(db, brief, slot)
+            # A slot needs a clip at least as long as its own minimum, not the
+            # fitted duration, so a short brief cannot admit unusable footage.
+            candidates = [c for c in candidates if (c.get("duration_ms") or 0) >= slot.min_ms]
 
-        # Cohesion anchor: if this slot continues an earlier one's story, take
-        # that clip's place and food category to steer toward the same venue.
-        cohere_place = cohere_subcat = None
-        anchor = chosen_by_role.get(slot.cohere_with) if slot.cohere_with else None
-        if anchor:
-            cohere_place = (anchor.get("place_name") or "").lower() or None
-            cohere_subcat = (anchor.get("subcategory") or "").lower() or None
+            # Cohesion anchor: if this slot continues an earlier one's story,
+            # take that clip's place and food category to steer to the same
+            # venue.
+            cohere_place = cohere_subcat = None
+            anchor = chosen_by_role.get(slot.cohere_with) if slot.cohere_with else None
+            if anchor:
+                cohere_place = (anchor.get("place_name") or "").lower() or None
+                cohere_subcat = (anchor.get("subcategory") or "").lower() or None
 
-        chosen = choose_for_slot(candidates, brief, slot, used_ids,
-                                 used_checksums, used_places, used_subcats, rng,
-                                 used_shot_types, cohere_place, cohere_subcat)
+            chosen = choose_for_slot(candidates, brief, slot, used_ids,
+                                     used_checksums, used_places, used_subcats, rng,
+                                     used_shot_types, cohere_place, cohere_subcat)
         if chosen is None:
             detail = {
                 "asset_types": slot.asset_types,

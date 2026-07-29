@@ -971,3 +971,33 @@ class TestEndCardAppend:
                                template_id="city-discovery-reaction-v1", seed="t")
         recipe = sel.select(MoodAwareDb(rows), brief)
         assert all(c["role"] != "cta" for c in recipe["timeline"])
+
+
+class TestEndCardRotation:
+    def _outro(self, pk, **kw):
+        return asset(pk, "cta", city_agnostic=True, cityid=None, city_slug=None,
+                     duration_ms=3000, **kw)
+
+    def test_the_least_used_outro_is_chosen(self):
+        rows = full_library() + [self._outro(500, use_count=3),
+                                 self._outro(501, use_count=0)]
+        recipe = sel.select(FakeDb(rows), NY)
+        assert recipe["timeline"][-1]["role"] == "cta"
+        assert recipe["timeline"][-1]["asset_id"] == "UGC-00501"
+
+    def test_a_single_outro_is_still_used(self):
+        rows = full_library() + [self._outro(500)]
+        recipe = sel.select(FakeDb(rows), NY)
+        assert recipe["timeline"][-1]["asset_id"] == "UGC-00500"
+
+    def test_both_outros_get_used_across_renders(self):
+        base = full_library()
+        first = sel.select(FakeDb(base + [self._outro(500, use_count=0),
+                                          self._outro(501, use_count=0)]), NY)
+        used_first = first["timeline"][-1]["asset_id"]
+        counts = {"UGC-00500": 1 if used_first == "UGC-00500" else 0,
+                  "UGC-00501": 1 if used_first == "UGC-00501" else 0}
+        second = sel.select(FakeDb(base + [
+            self._outro(500, use_count=counts["UGC-00500"]),
+            self._outro(501, use_count=counts["UGC-00501"])]), NY)
+        assert second["timeline"][-1]["asset_id"] != used_first
