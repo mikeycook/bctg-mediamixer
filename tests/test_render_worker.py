@@ -224,3 +224,32 @@ class TestFfmpegErrorExtraction:
     def test_falls_back_to_the_tail_when_nothing_matches(self):
         msg = worker._ffmpeg_error(1, "just some benign progress output")
         assert "benign progress output" in msg
+
+
+class TestEditedRecipeCaptions:
+    def _recipe(self):
+        return {
+            "canvas": {"width": 1080, "height": 1920, "fps": 30},
+            "total_duration_ms": 6000,
+            "captions_frozen": True,
+            "captions": [
+                {"text": "Best slice in Chelsea", "start_ms": 0, "end_ms": 2500, "style": "label"},
+                {"text": "♪ Old Track — Some Artist", "start_ms": 3000, "end_ms": 6000, "style": "label"},
+            ],
+            "music": [],
+        }
+
+    def test_frozen_captions_are_used_verbatim(self, tmp_path):
+        if worker.captions.find_font() is None:
+            import pytest; pytest.skip("no drawtext font on this box")
+        _, planned = worker.plan_and_write_captions(None, self._recipe(), str(tmp_path))
+        texts = [c.text for c in planned]
+        assert "Best slice in Chelsea" in texts
+
+    def test_a_prior_music_credit_line_is_dropped(self, tmp_path):
+        # The ♪ outro is re-derived from the current bed, so an old one baked
+        # into the edited recipe must not linger (or double up on a bed swap).
+        if worker.captions.find_font() is None:
+            import pytest; pytest.skip("no drawtext font on this box")
+        _, planned = worker.plan_and_write_captions(None, self._recipe(), str(tmp_path))
+        assert not any(c.text.startswith("♪") for c in planned)

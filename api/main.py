@@ -28,6 +28,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import unquote
@@ -812,20 +813,11 @@ def vr_validate(recipe):
     return vr.validate_recipe(recipe)
 
 
-@app.post("/admin/renders")
-def start_render(body: BriefBody, db=Depends(get_db), _=Depends(require_secret)):
+def _reap_and_guard(db):
     """
-    Starts a render in the background and returns immediately.
-
-    An encode takes minutes, which is far longer than an HTTP request should
-    hold. Selection runs synchronously first so an unfillable brief fails
-    here with a useful message instead of appearing to start and then dying
-    in a log the operator never sees.
+    Reap renders orphaned by a dead worker, then refuse if too many are still
+    in flight. Shared by the fresh-brief and edited-recipe render paths.
     """
-    # Reap orphaned renders whose worker died before finishing (a crash or the
-    # OOM killer). Left alone they sit in 'rendering' forever and, because the
-    # guard below counts them, block every new render. Self-healing, so a crash
-    # never requires a manual cleanup.
     db.execute_query(
         "UPDATE public.content_library_renders "
         "SET state='failed', error_code='orphaned', "
@@ -834,11 +826,6 @@ def start_render(body: BriefBody, db=Depends(get_db), _=Depends(require_secret))
         "WHERE state IN ('planned','queued','rendering','validating') "
         "  AND created_at < now() - make_interval(mins => %(mins)s)",
         {"mins": _RENDER_STALE_MINUTES})
-
-    # Refuse to pile on when renders are already in flight. Encodes run one at
-    # a time (the worker takes a lock) and each peaks around 2 GB, so a burst
-    # of clicks would otherwise queue a stack of workers and, historically,
-    # exhaust the box. Best-effort: the worker's own lock is the hard guarantee.
     inflight = db.execute_query(
         "SELECT count(*) FROM public.content_library_renders "
         "WHERE state IN ('planned','queued','rendering','validating')")
@@ -850,17 +837,8 @@ def start_render(body: BriefBody, db=Depends(get_db), _=Depends(require_secret))
                    f"at a time and are memory-heavy — wait for them to finish "
                    f"before starting more.")
 
-    brief = _brief_from(body.brief)
-    try:
-        clselect.select(db, brief)
-    except clselect.SelectionError as failure:
-        raise HTTPException(status_code=422, detail=failure.as_dict())
 
-    # Pre-flight the scratch directory here rather than letting the worker
-    # discover it. The worker creates its render row only after setting up a
-    # workspace, so a failure at this stage leaves no trace anywhere — the
-    # render simply never appears, which is the least debuggable outcome
-    # available.
+def _require_scratch():
     scratch = os.getenv("SCRATCH_DIR", "/opt/mediamixer/scratch")
     if not os.path.isdir(scratch) or not os.access(scratch, os.W_OK):
         raise HTTPException(
@@ -869,10 +847,10 @@ def start_render(body: BriefBody, db=Depends(get_db), _=Depends(require_secret))
                    f"service. If it exists and is owned correctly, the unit "
                    f"needs ReadWritePaths={scratch} — systemd's sandbox is "
                    f"inherited by the render worker.")
+    return scratch
 
-    environment = body.brief.get("environment", "dev")
-    args = [_PYTHON, str(_REPO_ROOT / "RenderWorker.py"),
-            "--brief", json.dumps(body.brief), "--environment", environment]
+
+def _spawn_worker(args):
     try:
         # stdio is inherited so the worker's output lands in this service's
         # journal. Discarding it makes an early crash completely silent.
@@ -880,10 +858,123 @@ def start_render(body: BriefBody, db=Depends(get_db), _=Depends(require_secret))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"could not start render: {exc}")
 
+
+@app.post("/admin/renders")
+def start_render(body: BriefBody, db=Depends(get_db), _=Depends(require_secret)):
+    """
+    Starts a render in the background and returns immediately.
+
+    An encode takes minutes, which is far longer than an HTTP request should
+    hold. Selection runs synchronously first so an unfillable brief fails
+    here with a useful message instead of appearing to start and then dying
+    in a log the operator never sees.
+    """
+    _reap_and_guard(db)
+    brief = _brief_from(body.brief)
+    try:
+        clselect.select(db, brief)
+    except clselect.SelectionError as failure:
+        raise HTTPException(status_code=422, detail=failure.as_dict())
+
+    _require_scratch()
+    environment = body.brief.get("environment", "dev")
+    args = [_PYTHON, str(_REPO_ROOT / "RenderWorker.py"),
+            "--brief", json.dumps(body.brief), "--environment", environment]
+    _spawn_worker(args)
+
     # The worker creates its own render row within a second or two; the UI
     # picks it up by polling rather than being told an id that does not
     # exist yet.
     return {"started": True, "environment": environment}
+
+
+class RecipeBody(BaseModel):
+    recipe: Dict[str, Any]
+
+
+@app.post("/admin/renders/edited")
+def render_edited(body: RecipeBody, db=Depends(get_db), _=Depends(require_secret)):
+    """
+    Re-render an edited recipe as a *new* video — the operator changed a
+    caption, swapped a clip, or swapped the bed in the tab. Recipes stay
+    immutable per render; this renders a supplied copy rather than mutating
+    the original, so every video is still explained by its own recipe.
+    """
+    _reap_and_guard(db)
+    recipe = body.recipe or {}
+    errors = vr_validate(recipe)
+    if errors:
+        raise HTTPException(status_code=422,
+                            detail={"error": "recipe_invalid", "detail": errors})
+
+    scratch = _require_scratch()
+    environment = (recipe.get("brief") or {}).get("environment", "dev")
+    fd, path = tempfile.mkstemp(prefix="editrecipe_", suffix=".json", dir=scratch)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(recipe, handle)
+    args = [_PYTHON, str(_REPO_ROOT / "RenderWorker.py"),
+            "--recipe-file", path, "--environment", environment]
+    _spawn_worker(args)
+    return {"started": True, "environment": environment, "edited": True}
+
+
+@app.get("/admin/renders/{render_id}/alternatives")
+def render_alternatives(render_id: str, sequence_no: int = Query(...),
+                        db=Depends(get_db), _=Depends(require_secret)):
+    """
+    Eligible swap candidates for one timeline slot of a render, so the editor
+    can replace a single clip. Same-kind, city-eligible, active, probed,
+    portrait, and at least as long as the slot needs.
+    """
+    rows = _rows_as_dicts(
+        db, "SELECT recipe FROM public.content_library_renders WHERE render_id = %s",
+        (render_id,))
+    if not rows:
+        raise HTTPException(status_code=404, detail="no such render")
+    recipe = rows[0]["recipe"]
+    if isinstance(recipe, str):
+        recipe = json.loads(recipe)
+    timeline = (recipe or {}).get("timeline") or []
+    if sequence_no < 0 or sequence_no >= len(timeline):
+        raise HTTPException(status_code=400, detail="sequence_no out of range")
+    clip = timeline[sequence_no]
+    take_ms = int(clip["source_out_ms"]) - int(clip["source_in_ms"])
+
+    cur = _rows_as_dicts(
+        db, "SELECT asset_type FROM public.content_library_assets WHERE id = %s",
+        (clip.get("asset_pk"),))
+    asset_type = cur[0]["asset_type"] if cur else None
+    if not asset_type:
+        return {"role": clip.get("role"), "take_ms": take_ms, "alternatives": []}
+
+    brief = clselect.VideoBrief.from_dict(recipe.get("brief") or {})
+    slot = clselect.Slot(role=clip.get("role", "x"), asset_types=[asset_type],
+                         min_ms=take_ms, preferred_ms=take_ms, max_ms=take_ms,
+                         city_agnostic_ok=(asset_type == "cta"))
+    try:
+        candidates = clselect.eligible_candidates(db, brief, slot)
+    except Exception:
+        candidates = []
+
+    out = []
+    for cand in (candidates or []):
+        if cand.get("id") == clip.get("asset_pk"):
+            continue
+        if (cand.get("duration_ms") or 0) < take_ms:
+            continue
+        try:
+            preview = _s3.presign(cand["s3_key"])
+        except Exception:
+            preview = None
+        out.append({
+            "id": cand.get("id"), "asset_id": cand.get("asset_id"),
+            "s3_key": cand.get("s3_key"), "s3_version_id": cand.get("s3_version_id"),
+            "checksum_sha256": cand.get("checksum_sha256"),
+            "duration_ms": cand.get("duration_ms"),
+            "place_name": cand.get("place_name"), "subcategory": cand.get("subcategory"),
+            "preview_url": preview,
+        })
+    return {"role": clip.get("role"), "take_ms": take_ms, "alternatives": out}
 
 
 @app.get("/admin/renders")

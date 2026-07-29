@@ -260,11 +260,21 @@ def plan_and_write_captions(db, recipe, workdir, overrides=None):
     Planning is shared with the preview endpoint, so what the operator saw
     before rendering is what gets burned in.
     """
-    plan = captions.plan_for_recipe(db, recipe, overrides)
-    for problem in plan.unresolved:
-        print(f"[CAPT] skipped — {problem}")
-
-    caption_list = list(plan.captions)
+    if recipe.get("captions_frozen"):
+        # An edited recipe carries literal captions authored by hand; use them
+        # as-is instead of re-deriving from template patterns. The music outro
+        # is stripped and re-added below so a bed swap re-credits correctly.
+        caption_list = [
+            captions.Caption(text=str(c["text"]), start_ms=int(c["start_ms"]),
+                             end_ms=int(c["end_ms"]), style=c.get("style", "label"))
+            for c in (recipe.get("captions") or [])
+            if str(c.get("text", "")).strip()
+            and not str(c.get("text", "")).startswith(attribution.MUSIC_NOTE)]
+    else:
+        plan = captions.plan_for_recipe(db, recipe, overrides)
+        for problem in plan.unresolved:
+            print(f"[CAPT] skipped — {problem}")
+        caption_list = list(plan.captions)
 
     # A music bed that requires attribution earns a short credit at the end,
     # for the viewers who never open the description. The full credit still
@@ -374,8 +384,13 @@ def render_artifacts(recipe, input_paths, workdir, ffmpeg="ffmpeg", timeout=1800
 
 
 def run(db, s3, exporter, brief, environment, scratch_root, ffmpeg="ffmpeg",
-        keep_scratch=False, verify_sources=True):
-    recipe = clselect.select(db, brief)
+        keep_scratch=False, verify_sources=True, recipe=None):
+    # `recipe` is supplied when re-rendering an edited recipe from the tab —
+    # captions changed, a clip swapped, the bed swapped. Selection is skipped,
+    # but the recipe is validated with the same gate as a fresh one, so an
+    # edit that broke contiguity or reused footage fails here, not silently.
+    if recipe is None:
+        recipe = clselect.select(db, brief)
 
     errors = vr.validate_recipe(recipe)
     if errors:
@@ -509,6 +524,9 @@ def main():
     source = ap.add_mutually_exclusive_group(required=True)
     source.add_argument("--brief", help="Brief as inline JSON")
     source.add_argument("--brief-file", help="Path to a brief JSON file")
+    source.add_argument("--recipe-file",
+                        help="Path to an edited recipe JSON; renders it "
+                             "directly, skipping selection")
     ap.add_argument("--environment", default="dev", choices=["dev", "staging", "prod"])
     ap.add_argument("--dry-run", action="store_true",
                     help="Select and validate a recipe, render nothing")
@@ -525,8 +543,13 @@ def main():
     if not database_url:
         raise SystemExit("DATABASE_URL is not set.")
 
-    raw = json.loads(args.brief) if args.brief else \
-        json.loads(open(args.brief_file, encoding="utf-8").read())
+    supplied_recipe = None
+    if args.recipe_file:
+        supplied_recipe = json.loads(open(args.recipe_file, encoding="utf-8").read())
+        raw = dict(supplied_recipe.get("brief") or {})
+    else:
+        raw = json.loads(args.brief) if args.brief else \
+            json.loads(open(args.brief_file, encoding="utf-8").read())
     raw.setdefault("environment", args.environment)
     brief = clselect.VideoBrief.from_dict(raw)
 
@@ -540,7 +563,7 @@ def main():
 
         if args.dry_run:
             try:
-                recipe = clselect.select(db, brief)
+                recipe = supplied_recipe or clselect.select(db, brief)
             except clselect.SelectionError as failure:
                 print(json.dumps(failure.as_dict(), indent=2))
                 raise SystemExit(1)
@@ -557,7 +580,8 @@ def main():
                 S3Exporter(bucket, region=region), brief, args.environment,
                 args.scratch_dir, ffmpeg=args.ffmpeg,
                 keep_scratch=args.keep_scratch,
-                verify_sources=not args.no_verify_sources)
+                verify_sources=not args.no_verify_sources,
+                recipe=supplied_recipe)
         except clselect.SelectionError as failure:
             print(json.dumps(failure.as_dict(), indent=2))
             raise SystemExit(1)
