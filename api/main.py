@@ -40,6 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from api.db import get_db  # noqa: E402
 from S3Interpreter import S3Interpreter  # noqa: E402
+from S3Exporter import S3Exporter  # noqa: E402
 import ContentLibraryPaths as clpaths  # noqa: E402
 import CaptionBuilder as captions  # noqa: E402
 import ContentLibrarySelect as clselect  # noqa: E402
@@ -53,12 +54,46 @@ _REGION = os.getenv("CLIPS_REGION", "us-east-1")
 _ADMIN_SECRET = os.getenv("MEDIAMIXER_ADMIN_SECRET", "")
 
 _s3 = S3Interpreter(_BUCKET, region=_REGION)
+# Write-scoped to ugc-assets/exported/ — the only place server 3's role may
+# write. Poster thumbnails land under exported/thumbnails/.
+_exporter = S3Exporter(_BUCKET, region=_REGION)
+_THUMB_PREFIX = "ugc-assets/exported/thumbnails/"
+_VIDEO_EXT = (".mp4", ".mov", ".m4v", ".webm", ".avi", ".mkv")
 
 # How many un-measured clips the Sync button probes+checksums inline before
 # leaving the rest to the scheduled job. Kept small so the request stays
 # inside the browser's timeout even when a checksum downloads a whole clip.
 _SYNC_PROBE_LIMIT = int(os.getenv("SYNC_PROBE_LIMIT", "12"))
 _SYNC_PROBE_TIMEOUT = int(os.getenv("SYNC_PROBE_TIMEOUT", "60"))
+# Thumbnails per Sync click. Smaller than the probe batch: each spins ffmpeg
+# to decode a frame (which is what lets a .mov show in the browser at all).
+_SYNC_THUMB_LIMIT = int(os.getenv("SYNC_THUMB_LIMIT", "8"))
+_THUMB_TIMEOUT = int(os.getenv("THUMB_TIMEOUT", "60"))
+
+
+def _make_thumbnail(source_key, dest_key, timeout=_THUMB_TIMEOUT):
+    """
+    Extract one frame with ffmpeg and upload it as a JPEG. ffmpeg decodes the
+    source server-side, so this works even for HEVC .mov the browser cannot
+    play. Returns dest_key on success, None on failure.
+    """
+    url = _s3.presign(source_key)
+    fd, tmp = tempfile.mkstemp(suffix=".jpg")
+    os.close(fd)
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-ss", "1", "-i", url, "-frames:v", "1",
+             "-vf", "scale=320:-2", "-q:v", "4", tmp],
+            capture_output=True, text=True, timeout=timeout)
+        if proc.returncode != 0 or not os.path.exists(tmp) or os.path.getsize(tmp) == 0:
+            return None
+        _exporter.put_file(tmp, dest_key, content_type="image/jpeg", overwrite=True)
+        return dest_key
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 # Most renders allowed in flight at once. The worker also serializes encodes
 # with a lock, so this only bounds how many can queue up behind the one that
@@ -184,6 +219,11 @@ def list_content_library(hook: Optional[str] = Query(None),
         except Exception:
             # A missing preview must not take the whole tab down.
             row["preview_url"] = None
+        thumb = row.get("thumbnail_key")
+        try:
+            row["thumbnail_url"] = _s3.presign(thumb) if thumb else None
+        except Exception:
+            row["thumbnail_url"] = None
         out.append(row)
     return {"assets": out}
 
@@ -258,8 +298,30 @@ def sync_content_library(db=Depends(get_db), _=Depends(require_secret)):
         except Exception:
             continue
 
+    # Poster thumbnails for video clips that lack one — a real frame the grid
+    # can show even for footage the browser cannot decode. Bounded per click.
+    thumbs = 0
+    pending_thumbs = _rows_as_dicts(db, """
+        SELECT id, s3_key FROM public.content_library_assets
+        WHERE thumbnail_key IS NULL AND missing_since IS NULL
+          AND duration_ms IS NOT NULL
+          AND lower(s3_key) ~ '\\.(mp4|mov|m4v|webm|avi|mkv)$'
+        ORDER BY id LIMIT %(limit)s
+    """, {"limit": _SYNC_THUMB_LIMIT})
+    for asset in pending_thumbs:
+        dest = f"{_THUMB_PREFIX}{asset['id']}.jpg"
+        try:
+            if _make_thumbnail(asset["s3_key"], dest):
+                db.execute_query(
+                    "UPDATE public.content_library_assets SET thumbnail_key = %s "
+                    "WHERE id = %s", (dest, asset["id"]))
+                thumbs += 1
+        except Exception:
+            continue
+
     # 'durations' keeps the admin tab's handler unchanged.
-    return {"added": added, "durations": probed, "listed": len(objects)}
+    return {"added": added, "durations": probed, "thumbs": thumbs,
+            "listed": len(objects)}
 
 
 # Namespaces a reviewer may write. `emotion` is included so a wrong
