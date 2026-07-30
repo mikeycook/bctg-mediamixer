@@ -1,5 +1,28 @@
 import hashlib
 
+# Content types by extension, so a presigned URL opens inline in the browser
+# (plays / shows) instead of downloading. Clips uploaded without a type land
+# as application/octet-stream, which browsers always download; overriding the
+# response content-type on the presigned URL fixes that.
+_CONTENT_TYPES = {
+    ".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime",
+    ".webm": "video/webm", ".avi": "video/x-msvideo", ".mkv": "video/x-matroska",
+    ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".aac": "audio/aac",
+    ".wav": "audio/wav", ".flac": "audio/flac", ".ogg": "audio/ogg",
+    ".opus": "audio/opus",
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+    ".gif": "image/gif", ".webp": "image/webp",
+    ".json": "application/json", ".srt": "text/plain", ".txt": "text/plain",
+}
+
+
+def _content_type_for(key):
+    lower = (key or "").lower()
+    for ext, ctype in _CONTENT_TYPES.items():
+        if lower.endswith(ext):
+            return ctype
+    return None
+
 
 class S3Interpreter:
     """
@@ -68,11 +91,18 @@ class S3Interpreter:
         A time-limited GET URL. Used to hand objects to ffprobe without
         downloading them. Never log the result — it grants read access.
         """
+        params = {
+            "Bucket": self.bucket, "Key": key,
+            # inline so the browser plays/shows it in a tab rather than
+            # downloading; the content-type override handles objects stored
+            # as application/octet-stream.
+            "ResponseContentDisposition": "inline",
+        }
+        ctype = _content_type_for(key)
+        if ctype:
+            params["ResponseContentType"] = ctype
         return self.client().generate_presigned_url(
-            "get_object",
-            Params={"Bucket": self.bucket, "Key": key},
-            ExpiresIn=expires,
-        )
+            "get_object", Params=params, ExpiresIn=expires)
 
     def iter_object(self, key, chunk_size=1024 * 1024):
         """Yields the object body in chunks. Never materializes it whole."""
