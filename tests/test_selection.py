@@ -1038,3 +1038,27 @@ class TestNeighborhoodReactionTemplate:
         roles = [c["role"] for c in recipe["timeline"]]
         assert "reaction_beat" not in roles
         assert recipe.get("skipped_optional_slots") == ["reaction_beat"]
+
+
+class TestGenericTemplates:
+    def _many_broll(self, n=12):
+        return [asset(100 + i, "broll", place_name=f"Place{i}",
+                      subcategory=f"cat{i}", duration_ms=8000) for i in range(n)]
+
+    @pytest.mark.parametrize("n", list(range(3, 11)))
+    def test_generic_produces_exactly_n_clips(self, n):
+        brief = sel.VideoBrief(cityid="CIT-00000000002",
+                               template_id=f"generic-{n}", with_endcard=False, seed="t")
+        recipe = sel.select(FakeDb(self._many_broll(12)), brief)
+        assert len(recipe["timeline"]) == n
+        assert all(c["role"].startswith("clip_") for c in recipe["timeline"])
+        # Contiguous and no baked-in caption specs.
+        assert recipe["caption_specs"] == []
+
+    def test_not_enough_footage_fails_clearly(self):
+        # generic-8 with only 4 clips: a required slot can't fill.
+        brief = sel.VideoBrief(cityid="CIT-00000000002",
+                               template_id="generic-8", with_endcard=False, seed="t")
+        with pytest.raises(sel.SelectionError) as excinfo:
+            sel.select(FakeDb(self._many_broll(4)), brief)
+        assert excinfo.value.code == "insufficient_assets"

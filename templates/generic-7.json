@@ -1,0 +1,97 @@
+{
+  "template_id": "generic-7",
+  "version": 1,
+  "description": "Generic 7-clip montage. 7 b-roll clips scoped to the city and biased by Topic, split evenly across the target length. No baked-in captions \u2014 add text and swap each clip per video in the editor. Music bed and the branded end-card apply as usual.",
+  "canvas": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30
+  },
+  "slots": [
+    {
+      "role": "clip_1",
+      "asset_types": [
+        "broll"
+      ],
+      "min_ms": 1500,
+      "preferred_ms": 3500,
+      "max_ms": 12000,
+      "required": true,
+      "prefer_topic_match": true,
+      "notes": "Themed clip 1 of 7. Swap it in the editor for the exact clip you want."
+    },
+    {
+      "role": "clip_2",
+      "asset_types": [
+        "broll"
+      ],
+      "min_ms": 1500,
+      "preferred_ms": 3500,
+      "max_ms": 12000,
+      "required": true,
+      "prefer_topic_match": true,
+      "notes": "Themed clip 2 of 7. Swap it in the editor for the exact clip you want."
+    },
+    {
+      "role": "clip_3",
+      "asset_types": [
+        "broll"
+      ],
+      "min_ms": 1500,
+      "preferred_ms": 3500,
+      "max_ms": 12000,
+      "required": true,
+      "prefer_topic_match": true,
+      "notes": "Themed clip 3 of 7. Swap it in the editor for the exact clip you want."
+    },
+    {
+      "role": "clip_4",
+      "asset_types": [
+        "broll"
+      ],
+      "min_ms": 1500,
+      "preferred_ms": 3500,
+      "max_ms": 12000,
+      "required": true,
+      "prefer_topic_match": true,
+      "notes": "Themed clip 4 of 7. Swap it in the editor for the exact clip you want."
+    },
+    {
+      "role": "clip_5",
+      "asset_types": [
+        "broll"
+      ],
+      "min_ms": 1500,
+      "preferred_ms": 3500,
+      "max_ms": 12000,
+      "required": true,
+      "prefer_topic_match": true,
+      "notes": "Themed clip 5 of 7. Swap it in the editor for the exact clip you want."
+    },
+    {
+      "role": "clip_6",
+      "asset_types": [
+        "broll"
+      ],
+      "min_ms": 1500,
+      "preferred_ms": 3500,
+      "max_ms": 12000,
+      "required": true,
+      "prefer_topic_match": true,
+      "notes": "Themed clip 6 of 7. Swap it in the editor for the exact clip you want."
+    },
+    {
+      "role": "clip_7",
+      "asset_types": [
+        "broll"
+      ],
+      "min_ms": 1500,
+      "preferred_ms": 3500,
+      "max_ms": 12000,
+      "required": true,
+      "prefer_topic_match": true,
+      "notes": "Themed clip 7 of 7. Swap it in the editor for the exact clip you want."
+    }
+  ],
+  "captions": []
+}
