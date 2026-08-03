@@ -1,0 +1,104 @@
+{
+  "template_id": "app-demo-3part-3reactions-v1",
+  "version": 1,
+  "description": "App feature demo in three sections with a reaction cut between and after each: app pt 1, reaction 1, app pt 2, reaction 2, app pt 3, reaction 3, then the branded outro. All three app slots scope to the brief's feature (subtype) via match_feature and dedupe against each other, so they draw three distinct clips of that feature. Order among the three app clips is by score, not by section number — tag each part's clip with a distinct shot_type and set prefer_subtypes per slot, or arrange them in edit mode, if a specific pt1/pt2/pt3 order matters. The three reactions carry an arc (intrigue, delight, then a final beat) via slot emotions and are required, so a thin reaction library surfaces a clear insufficient_assets error rather than silently dropping a beat; relax to \"required\": false or swap emotions for match_mood if that library is thin. The outro is the cta slot: with_endcard on fills it with a branded end-card (rotating across the CTA folder); off, it closes on a topic clip with the generated CTA line. Set Feature (and optionally City/Mood) on the brief.",
+  "canvas": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30
+  },
+  "slots": [
+    {
+      "role": "app_part_1",
+      "asset_types": ["app"],
+      "min_ms": 3000,
+      "preferred_ms": 6000,
+      "max_ms": 12000,
+      "required": true,
+      "prefer_topic_match": true,
+      "match_feature": true,
+      "notes": "Section 1 of the app demo. match_feature scopes it to the brief's feature (subtype); dedupe keeps it distinct from the other two app slots."
+    },
+    {
+      "role": "reaction_1",
+      "asset_types": ["reaction"],
+      "min_ms": 1500,
+      "preferred_ms": 2500,
+      "max_ms": 4000,
+      "required": true,
+      "city_agnostic_ok": true,
+      "emotions": ["surprised", "shocked", "confused"],
+      "notes": "First reaction, between sections 1 and 2 — the 'wait, what?' intrigue beat. Emotions set on the slot (not the brief mood) so the reactions differ. Reactions carry no city, hence city_agnostic_ok."
+    },
+    {
+      "role": "app_part_2",
+      "asset_types": ["app"],
+      "min_ms": 3000,
+      "preferred_ms": 6000,
+      "max_ms": 12000,
+      "required": true,
+      "prefer_topic_match": true,
+      "match_feature": true,
+      "notes": "Section 2 of the app demo."
+    },
+    {
+      "role": "reaction_2",
+      "asset_types": ["reaction"],
+      "min_ms": 1500,
+      "preferred_ms": 2500,
+      "max_ms": 4000,
+      "required": true,
+      "city_agnostic_ok": true,
+      "emotions": ["excited", "happy"],
+      "notes": "Second reaction, between sections 2 and 3 — the delight beat. Dedupe refuses to reuse an earlier reaction's clip or any sharing its checksum."
+    },
+    {
+      "role": "app_part_3",
+      "asset_types": ["app"],
+      "min_ms": 3000,
+      "preferred_ms": 6000,
+      "max_ms": 12000,
+      "required": true,
+      "prefer_topic_match": true,
+      "match_feature": true,
+      "notes": "Section 3 of the app demo."
+    },
+    {
+      "role": "reaction_3",
+      "asset_types": ["reaction"],
+      "min_ms": 1500,
+      "preferred_ms": 2500,
+      "max_ms": 4000,
+      "required": true,
+      "city_agnostic_ok": true,
+      "emotions": ["excited", "happy"],
+      "notes": "Third reaction, after section 3 — the closing beat before the outro. A third distinct reaction clip; dedupe keeps it different from reactions 1 and 2."
+    },
+    {
+      "role": "cta",
+      "asset_types": ["app", "broll"],
+      "min_ms": 2000,
+      "preferred_ms": 2500,
+      "max_ms": 3000,
+      "required": true,
+      "prefer_topic_match": false,
+      "notes": "The outro. with_endcard on points this at the branded end-card (rotating across the CTA folder); off, it holds a topic clip behind the generated CTA line."
+    }
+  ],
+  "captions": [
+    {
+      "role": "app_part_1",
+      "pattern": "{subtype}",
+      "style": "hook",
+      "lead_in_ms": 200,
+      "notes": "Names the feature. Dropped if the opening app clip has no subtype."
+    },
+    {
+      "role": "cta",
+      "pattern": "Find it in Big City Travel Guide",
+      "style": "cta",
+      "lead_in_ms": 100,
+      "notes": "Fixed copy. Suppressed automatically when the branded end-card fills this slot."
+    }
+  ]
+}
