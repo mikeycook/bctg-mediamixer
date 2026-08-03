@@ -11,7 +11,7 @@
     {
       "role": "app_part_1",
       "asset_types": ["app"],
-      "min_ms": 3000,
+      "min_ms": 1500,
       "preferred_ms": 6000,
       "max_ms": 12000,
       "required": true,
@@ -35,7 +35,7 @@
     {
       "role": "app_part_2",
       "asset_types": ["app"],
-      "min_ms": 3000,
+      "min_ms": 1500,
       "preferred_ms": 6000,
       "max_ms": 12000,
       "required": true,
@@ -59,7 +59,7 @@
     {
       "role": "app_part_3",
       "asset_types": ["app"],
-      "min_ms": 3000,
+      "min_ms": 1500,
       "preferred_ms": 6000,
       "max_ms": 12000,
       "required": true,
