@@ -450,18 +450,18 @@ class TestShotTypeOrdering:
         # still keep it out of slot 1 and in slot 2.
         rows = [
             asset(1, "app", subtype="Features", shot_type="Pt 1",
-                  duration_ms=6000, quality_score=1),
+                  subcategory="burgers", duration_ms=6000, quality_score=1),
             asset(2, "app", subtype="Features", shot_type="Pt 2",
-                  duration_ms=6000, quality_score=5),
+                  subcategory="burgers", duration_ms=6000, quality_score=5),
             asset(3, "app", subtype="Features", shot_type="Pt 3",
-                  duration_ms=6000, quality_score=1),
+                  subcategory="burgers", duration_ms=6000, quality_score=1),
             reaction(20, ["surprised"]),
             reaction(21, ["excited", "happy"]),
-            asset(30, "broll", category="food", subcategory="pizza",
+            asset(30, "broll", category="food", subcategory="burgers",
                   place_name="Joe's", duration_ms=3000),
         ]
         brief = sel.VideoBrief(
-            cityid="CIT-00000000002", topic="app", feature="Features",
+            cityid="CIT-00000000002", topic="burgers", feature="Features",
             template_id="app-demo-3part-2reactions-v1", seed="t")
         recipe = sel.select(MoodAwareDb(rows), brief)
         roles = [c["role"] for c in recipe["timeline"]]
@@ -472,6 +472,66 @@ class TestShotTypeOrdering:
                    for c in recipe["timeline"] if c["role"].startswith("app_part")}
         assert shot_of == {"app_part_1": "Pt 1", "app_part_2": "Pt 2",
                            "app_part_3": "Pt 3"}
+
+
+class TestTopicStrictness:
+    """require_topic_match is the hard counterpart to prefer_topic_match."""
+
+    def test_topic_matches_covers_the_same_fields_the_ranker_rewards(self):
+        assert sel.topic_matches(asset(1, "app", subcategory="Burgers"), "burgers")
+        assert sel.topic_matches(asset(2, "app", category="Burgers"), "burgers")
+        assert sel.topic_matches(
+            asset(3, "app", place_name="Best Burgers NYC"), "burgers")
+        assert sel.topic_matches(
+            asset(4, "app", hook_compatibility=["Best Burgers"]), "burgers")
+        assert not sel.topic_matches(asset(5, "app", subcategory="Bagels"), "burgers")
+        # No topic is a match — the filter is a no-op when the brief has none.
+        assert sel.topic_matches(asset(6, "app", subcategory="Bagels"), "")
+
+    def test_require_topic_match_excludes_off_topic_clips(self):
+        slot = sel.Slot("app_part_3", ["app"], 3000, 6000, 12000,
+                        require_topic_match=True)
+        rows = [asset(1, "app", subtype="Features", subcategory="burgers"),
+                asset(2, "app", subtype="Features", subcategory="bagels")]
+        got = sel.eligible_candidates(
+            FakeDb(rows), sel.VideoBrief(cityid="CIT-00000000002", topic="burgers"),
+            slot)
+        assert [r["id"] for r in got] == [1]
+
+    def test_require_topic_match_is_a_noop_without_a_brief_topic(self):
+        slot = sel.Slot("app_part_3", ["app"], 3000, 6000, 12000,
+                        require_topic_match=True)
+        rows = [asset(1, "app", subtype="Features", subcategory="bagels")]
+        got = sel.eligible_candidates(
+            FakeDb(rows), sel.VideoBrief(cityid="CIT-00000000002"), slot)
+        assert [r["id"] for r in got] == [1]
+
+    def test_higher_scoring_off_topic_clip_never_wins_the_slot(self):
+        # The bug this fixes: a bagels Pt 3 with quality 5 beat the burgers
+        # Pt 3 at quality 1 on a burgers brief. The topic filter must keep it
+        # out of the app slots entirely.
+        rows = [
+            asset(1, "app", subtype="Features", shot_type="Pt 1",
+                  subcategory="burgers", duration_ms=6000),
+            asset(2, "app", subtype="Features", shot_type="Pt 2",
+                  subcategory="burgers", duration_ms=6000),
+            asset(3, "app", subtype="Features", shot_type="Pt 3",
+                  subcategory="burgers", duration_ms=6000, quality_score=1),
+            asset(4, "app", subtype="Features", shot_type="Pt 3",
+                  subcategory="bagels", duration_ms=6000, quality_score=5),
+            reaction(20, ["surprised"]),
+            reaction(21, ["excited", "happy"]),
+            asset(30, "broll", category="food", subcategory="burgers",
+                  place_name="Joe's", duration_ms=3000),
+        ]
+        brief = sel.VideoBrief(
+            cityid="CIT-00000000002", topic="burgers", feature="Features",
+            template_id="app-demo-3part-2reactions-v1", seed="t")
+        recipe = sel.select(MoodAwareDb(rows), brief)
+        by_pk = {a["id"]: a for a in rows}
+        part3 = next(c for c in recipe["timeline"] if c["role"] == "app_part_3")
+        assert by_pk[part3["asset_pk"]]["subcategory"] == "burgers"
+        assert by_pk[part3["asset_pk"]]["id"] == 3
 
 
 def reaction(pk, emotions, **kw):

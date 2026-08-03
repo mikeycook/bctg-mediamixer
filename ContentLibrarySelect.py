@@ -183,6 +183,12 @@ class Slot:
     # feature subtype and only their shot_type distinguishes the order, so a
     # slot can take exactly its part and no other.
     require_shot_type: Optional[str] = None
+    # When true and the brief carries a topic, restrict this slot to clips that
+    # actually match that topic — the hard version of prefer_topic_match. It
+    # admits exactly the clips prefer_topic_match would reward (subcategory,
+    # category, place_name, tag, or hook), so a burgers brief can never fall
+    # back to a bagels clip merely because it scored higher elsewhere.
+    require_topic_match: bool = False
     # Continue the story of an earlier slot: name its role here and this slot
     # prefers a clip of the same place (ideally) or at least the same food
     # category — so the interior and the dish are one venue, not two. The
@@ -318,6 +324,15 @@ def eligible_candidates(db, brief: VideoBrief, slot: Slot):
         # away most of the frame, so it is excluded rather than silently
         # letterboxed.
         rows = [r for r in rows if r.get("orientation") in (None, "portrait", "square")]
+
+    if slot.require_topic_match and (brief.topic or "").strip():
+        # The hard counterpart to prefer_topic_match. Applied in Python (not
+        # SQL) because the signals span an array column (tags) and a substring
+        # match (place_name); it uses the same predicate as the ranking bonus,
+        # so requiring a topic match can never exclude a clip the ranker would
+        # have rewarded.
+        topic = brief.topic.strip().lower()
+        rows = [r for r in rows if topic_matches(r, topic)]
     return rows
 
 
@@ -337,6 +352,29 @@ def shot_signal(row):
     the schema hoped for.
     """
     return ((row.get("shot_type") or row.get("subtype") or "") or "").strip().lower() or None
+
+
+def topic_matches(row, topic):
+    """
+    True when a clip is on-topic — the same signals score_candidate rewards
+    for prefer_topic_match: an exact subcategory or category, the topic named
+    in the place, a matching tag, or a matching hook phrase. `topic` is already
+    lowercased. Kept in lockstep with the ranker so require_topic_match admits
+    exactly the clips prefer_topic_match would reward and no others.
+    """
+    if not topic:
+        return True
+    if (row.get("subcategory") or "").lower() == topic:
+        return True
+    if (row.get("category") or "").lower() == topic:
+        return True
+    if topic in (row.get("place_name") or "").lower():
+        return True
+    if topic in {(t or "").lower() for t in (row.get("tag_slugs") or [])}:
+        return True
+    if topic in " ".join(row.get("hook_compatibility") or []).lower():
+        return True
+    return False
 
 
 def score_candidate(row, brief: VideoBrief, slot: Slot, used_places, used_subcats,
