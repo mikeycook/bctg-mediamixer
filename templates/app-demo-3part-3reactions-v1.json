@@ -17,7 +17,8 @@
       "required": true,
       "prefer_topic_match": true,
       "match_feature": true,
-      "notes": "Section 1 of the app demo. match_feature scopes it to the brief's feature (subtype); dedupe keeps it distinct from the other two app slots."
+      "require_shot_type": "Pt 1",
+      "notes": "Section 1 of the app demo. match_feature scopes it to the brief's feature (subtype); require_shot_type pins this slot to the clip tagged shot_type='Pt 1'."
     },
     {
       "role": "reaction_1",
@@ -39,7 +40,8 @@
       "required": true,
       "prefer_topic_match": true,
       "match_feature": true,
-      "notes": "Section 2 of the app demo."
+      "require_shot_type": "Pt 2",
+      "notes": "Section 2 of the app demo. require_shot_type pins this slot to the clip tagged shot_type='Pt 2'."
     },
     {
       "role": "reaction_2",
@@ -61,7 +63,8 @@
       "required": true,
       "prefer_topic_match": true,
       "match_feature": true,
-      "notes": "Section 3 of the app demo."
+      "require_shot_type": "Pt 3",
+      "notes": "Section 3 of the app demo. require_shot_type pins this slot to the clip tagged shot_type='Pt 3'."
     },
     {
       "role": "reaction_3",

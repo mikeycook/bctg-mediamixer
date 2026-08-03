@@ -55,6 +55,10 @@ class FakeDb:
             if "feature" in params and (
                     (row.get("subtype") or "").lower() != params["feature"].lower()):
                 continue
+            if "require_shot_type" in params and (
+                    (row.get("shot_type") or "").lower()
+                    != params["require_shot_type"].lower()):
+                continue
             out.append(dict(row))
         return out
 
@@ -418,6 +422,56 @@ class TestShotProgression:
         template = sel.load_template("city-discovery-v1")
         app_slot = next(s for s in template.slots if s.role == "app_demonstration")
         assert app_slot.prefer_subtypes == []
+
+
+class TestShotTypeOrdering:
+    """require_shot_type pins ordered app-demo parts by shot_type."""
+
+    def test_require_shot_type_is_a_hard_filter(self):
+        # Same feature subtype on both; only the shot_type differs.
+        slot = sel.Slot("app_part_1", ["app"], 3000, 6000, 12000,
+                        require_shot_type="Pt 1")
+        rows = [asset(1, "app", subtype="Features", shot_type="Pt 1"),
+                asset(2, "app", subtype="Features", shot_type="Pt 2")]
+        got = sel.eligible_candidates(
+            FakeDb(rows), sel.VideoBrief(cityid="CIT-00000000002"), slot)
+        assert [r["id"] for r in got] == [1]
+
+    def test_untagged_clip_never_fills_a_pinned_slot(self):
+        slot = sel.Slot("app_part_2", ["app"], 3000, 6000, 12000,
+                        require_shot_type="Pt 2")
+        rows = [asset(1, "app", subtype="Features", shot_type=None)]
+        got = sel.eligible_candidates(
+            FakeDb(rows), sel.VideoBrief(cityid="CIT-00000000002"), slot)
+        assert got == []
+
+    def test_parts_land_in_order_regardless_of_quality(self):
+        # Pt 2 is the "best" clip by quality and duration fit; the pin must
+        # still keep it out of slot 1 and in slot 2.
+        rows = [
+            asset(1, "app", subtype="Features", shot_type="Pt 1",
+                  duration_ms=6000, quality_score=1),
+            asset(2, "app", subtype="Features", shot_type="Pt 2",
+                  duration_ms=6000, quality_score=5),
+            asset(3, "app", subtype="Features", shot_type="Pt 3",
+                  duration_ms=6000, quality_score=1),
+            reaction(20, ["surprised"]),
+            reaction(21, ["excited", "happy"]),
+            asset(30, "broll", category="food", subcategory="pizza",
+                  place_name="Joe's", duration_ms=3000),
+        ]
+        brief = sel.VideoBrief(
+            cityid="CIT-00000000002", topic="app", feature="Features",
+            template_id="app-demo-3part-2reactions-v1", seed="t")
+        recipe = sel.select(MoodAwareDb(rows), brief)
+        roles = [c["role"] for c in recipe["timeline"]]
+        assert roles == ["app_part_1", "reaction_1", "app_part_2",
+                         "reaction_2", "app_part_3", "cta"]
+        by_pk = {a["id"]: a for a in rows}
+        shot_of = {c["role"]: by_pk[c["asset_pk"]]["shot_type"]
+                   for c in recipe["timeline"] if c["role"].startswith("app_part")}
+        assert shot_of == {"app_part_1": "Pt 1", "app_part_2": "Pt 2",
+                           "app_part_3": "Pt 3"}
 
 
 def reaction(pk, emotions, **kw):

@@ -177,6 +177,12 @@ class Slot:
     # whose subtype is that feature — so a "live tracking" video uses the
     # live-tracking clip, not the pizza-map one. Set on the app slot.
     match_feature: bool = False
+    # When set, restrict this slot to clips whose shot_type equals this value
+    # (exact, case-insensitive) — a hard filter, unlike prefer_subtypes. Pins
+    # an ordered sequence (Pt 1 / Pt 2 / Pt 3) when several clips share one
+    # feature subtype and only their shot_type distinguishes the order, so a
+    # slot can take exactly its part and no other.
+    require_shot_type: Optional[str] = None
     # Continue the story of an earlier slot: name its role here and this slot
     # prefers a clip of the same place (ideally) or at least the same food
     # category — so the interior and the dish are one venue, not two. The
@@ -297,6 +303,12 @@ def eligible_candidates(db, brief: VideoBrief, slot: Slot):
     if slot.match_feature and brief.feature:
         sql += " AND lower(subtype) = lower(%(feature)s)"
         params["feature"] = brief.feature.strip()
+
+    if slot.require_shot_type:
+        # Exact shot_type match — the ordering pin. subtype still carries the
+        # feature (match_feature above); shot_type carries the part number.
+        sql += " AND lower(shot_type) = lower(%(require_shot_type)s)"
+        params["require_shot_type"] = slot.require_shot_type.strip()
 
     rows = db.execute_query_as_dict(sql, params)
     rows = rows if isinstance(rows, list) else []

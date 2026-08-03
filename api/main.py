@@ -795,6 +795,7 @@ def list_templates(_=Depends(require_secret)):
                 "max_ms": s["max_ms"],
                 "required": s.get("required", True),
                 "prefer_subtypes": s.get("prefer_subtypes", []),
+                "require_shot_type": s.get("require_shot_type"),
                 "match_mood": s.get("match_mood", False),
                 "notes": s.get("notes", ""),
             } for s in data["slots"]],
