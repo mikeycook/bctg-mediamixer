@@ -1016,10 +1016,18 @@ def render_alternatives(render_id: str, sequence_no: int = Query(...),
     if not asset_type:
         return {"role": clip.get("role"), "take_ms": take_ms, "alternatives": []}
 
+    # Reactions are a shared, city-agnostic library — a performance is not tied
+    # to a place, a topic, or a length. For those, offer the whole library so an
+    # editor can pick any reaction, not only ones long enough for the slot or
+    # matching the brief. The client re-flows the timeline when a shorter clip
+    # is chosen. Other asset types stay scoped and keep the duration floor,
+    # since a shorter b-roll/app clip would leave the slot's segment short.
+    unrestricted = asset_type == "reaction"
     brief = clselect.VideoBrief.from_dict(recipe.get("brief") or {})
     slot = clselect.Slot(role=clip.get("role", "x"), asset_types=[asset_type],
-                         min_ms=take_ms, preferred_ms=take_ms, max_ms=take_ms,
-                         city_agnostic_ok=(asset_type == "cta"))
+                         min_ms=0 if unrestricted else take_ms,
+                         preferred_ms=take_ms, max_ms=take_ms,
+                         city_agnostic_ok=(asset_type in ("cta", "reaction")))
     try:
         candidates = clselect.eligible_candidates(db, brief, slot)
     except Exception:
@@ -1029,7 +1037,7 @@ def render_alternatives(render_id: str, sequence_no: int = Query(...),
     for cand in (candidates or []):
         if cand.get("id") == clip.get("asset_pk"):
             continue
-        if (cand.get("duration_ms") or 0) < take_ms:
+        if not unrestricted and (cand.get("duration_ms") or 0) < take_ms:
             continue
         try:
             preview = _s3.presign(cand["s3_key"])
@@ -1044,7 +1052,8 @@ def render_alternatives(render_id: str, sequence_no: int = Query(...),
             "notes": cand.get("notes"),
             "preview_url": preview,
         })
-    return {"role": clip.get("role"), "take_ms": take_ms, "alternatives": out}
+    return {"role": clip.get("role"), "take_ms": take_ms,
+            "unrestricted": unrestricted, "alternatives": out}
 
 
 @app.get("/admin/renders")
