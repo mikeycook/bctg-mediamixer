@@ -49,6 +49,18 @@ def _commit_returning(db, sql, params):
     return rows
 
 
+def _known_city_slugs(db):
+    """Slugs from cities_reference, so a folder segment can be recognised as a
+    city regardless of whether it comes before or after the topic. Empty set if
+    the (lagging) reference table isn't present."""
+    try:
+        rows = db.execute_query(
+            "SELECT city_slug FROM public.cities_reference WHERE city_slug IS NOT NULL")
+        return {r[0] for r in (rows or []) if r[0]}
+    except Exception:
+        return set()
+
+
 def _probe_dimensions(s3, key):
     """Read the object and return (width, height, orientation) or (None,)*3."""
     try:
@@ -64,6 +76,7 @@ def _probe_dimensions(s3, key):
 def sync_images(db, s3, bucket, prefix=paths.IMAGES_PREFIX, dry_run=False):
     seen_keys = []
     added = updated = skipped = 0
+    known_cities = _known_city_slugs(db)
 
     for obj in s3.list_objects(prefix):
         key, size = obj["key"], obj.get("size", 0)
@@ -74,7 +87,7 @@ def sync_images(db, s3, bucket, prefix=paths.IMAGES_PREFIX, dry_run=False):
         if dry_run:
             continue
 
-        classified = paths.classify(key)
+        classified = paths.classify(key, prefix, known_city_slugs=known_cities)
         ext = "." + key.rsplit(".", 1)[-1].lower()
         width, height, orientation = _probe_dimensions(s3, key)
         params = {

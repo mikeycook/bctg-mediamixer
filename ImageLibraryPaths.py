@@ -1,16 +1,18 @@
 """
 Classify source-photo keys under ugc-assets/images/.
 
-Layout you upload into (parallel to the video clip folders, but its own tree
-so the video sync never touches it):
+A photo's key carries a city and a topic in its folders:
 
-    ugc-assets/images/<city-slug>/<topic>/<file>.jpg
+    ugc-assets/images/<topic>/<city-slug>/<file>.jpg     (or city-slug/topic — either order)
 
-city-slug resolves to a city the same way the clip library does; topic lands
-in `subcategory` (e.g. burgers), which is what image templates scope to.
+Order-independent: when the set of known city slugs is supplied (the sync
+passes it from cities_reference), whichever folder segment is a known slug is
+the city and the other is the topic. Without that set — pure calls, tests —
+it falls back to positional <topic>/<city-slug>. topic lands in `subcategory`
+(e.g. burgers), which is what image templates scope to.
 """
 from dataclasses import dataclass
-from typing import Optional
+from typing import Iterable, Optional
 
 import ContentLibraryPaths as _clp
 
@@ -35,16 +37,30 @@ class ClassifiedImage:
     recognized: bool = False
 
 
-def classify(key: str, prefix: str = IMAGES_PREFIX) -> ClassifiedImage:
+def classify(key: str, prefix: str = IMAGES_PREFIX,
+             known_city_slugs: Optional[Iterable[str]] = None) -> ClassifiedImage:
     filename = key.rsplit("/", 1)[-1]
     folder = key[:len(key) - len(filename)].rstrip("/")
     if not key.startswith(prefix):
         return ClassifiedImage(key=key, filename=filename, folder=folder)
-    rest = key[len(prefix):]
-    segments = [s for s in rest.split("/") if s]
-    # segments = [city-slug, topic, ..., filename]
-    city_slug = segments[0] if len(segments) >= 2 else None
-    subcategory = segments[1] if len(segments) >= 3 else None
+
+    # Folder segments only (drop the filename).
+    segments = [s for s in key[len(prefix):].split("/")[:-1] if s]
+    city_slug = subcategory = None
+
+    known = {s.lower() for s in (known_city_slugs or [])}
+    if known:
+        city_slug = next((s for s in segments if s.lower() in known), None)
+        subcategory = next((s for s in segments if s != city_slug), None)
+
+    # Positional fallback (no known set, or the city wasn't recognised):
+    # the layout is <topic>/<city-slug>.
+    if city_slug is None and subcategory is None:
+        if len(segments) >= 1:
+            subcategory = segments[0]
+        if len(segments) >= 2:
+            city_slug = segments[1]
+
     return ClassifiedImage(
         key=key, filename=filename, folder=folder,
         city_slug=city_slug, subcategory=subcategory,
