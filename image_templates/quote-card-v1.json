@@ -1,0 +1,19 @@
+{
+  "template_id": "quote-card-v1",
+  "version": 1,
+  "description": "Text-only card on a solid background: a large centered quote/headline with an optional attribution line. No photo. Portrait 1080x1920.",
+  "canvas": { "width": 1080, "height": 1920, "background": "#101418" },
+  "image_slots": [],
+  "text_slots": [
+    { "name": "quote", "x": 120, "y": 520, "w": 840, "h": 880,
+      "align": "center", "valign": "middle",
+      "font_size": 96, "color": "#ffffff", "bold": true,
+      "max_lines": 6, "padding": 0, "required": true,
+      "placeholder": "Your headline or quote" },
+    { "name": "attribution", "x": 120, "y": 1440, "w": 840, "h": 120,
+      "align": "center", "valign": "middle",
+      "font_size": 46, "color": "#9aa0a6", "bold": false,
+      "max_lines": 1, "padding": 0, "required": false,
+      "placeholder": "— attribution" }
+  ]
+}

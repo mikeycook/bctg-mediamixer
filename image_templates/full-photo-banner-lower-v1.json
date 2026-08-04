@@ -1,0 +1,17 @@
+{
+  "template_id": "full-photo-banner-lower-v1",
+  "version": 1,
+  "description": "One full-bleed photo with a translucent banner across the lower third. Portrait 1080x1920.",
+  "canvas": { "width": 1080, "height": 1920, "background": "#000000" },
+  "image_slots": [
+    { "name": "photo", "x": 0, "y": 0, "w": 1080, "h": 1920, "fit": "cover", "required": true }
+  ],
+  "text_slots": [
+    { "name": "banner", "x": 0, "y": 1360, "w": 1080, "h": 400,
+      "background": "#000000", "background_opacity": 0.55,
+      "align": "center", "valign": "middle",
+      "font_size": 84, "color": "#ffffff", "bold": true,
+      "max_lines": 3, "padding": 56, "required": true,
+      "placeholder": "Headline" }
+  ]
+}

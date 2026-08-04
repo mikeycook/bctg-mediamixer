@@ -23,12 +23,14 @@ Env:
     CLIPS_REGION             — default us-east-1
 """
 
+import io
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import unquote
@@ -45,6 +47,9 @@ import ContentLibraryPaths as clpaths  # noqa: E402
 import CaptionBuilder as captions  # noqa: E402
 import ContentLibrarySelect as clselect  # noqa: E402
 import ContentLibrarySync as sync  # noqa: E402
+import ImageComposer as imgcomposer  # noqa: E402
+import ImageLibrarySync as imgsync  # noqa: E402
+import ImageLibraryPaths as imgpaths  # noqa: E402
 
 app = FastAPI(title="MediaMixer Content Library")
 
@@ -1133,3 +1138,217 @@ def render_detail(render_id: str, db=Depends(get_db), _=Depends(require_secret))
     """, (render["id"],))
 
     return {"render": render, "artifacts": artifacts, "clips": clips}
+
+
+# ===========================================================================
+# Images — a still-image counterpart to the video tools.
+#
+# Source photos live under ugc-assets/images/ (you upload them; the video sync
+# skips that tree). Composed outputs land under ugc-assets/exported/images/ —
+# server 3's only writable prefix. Composition is Pillow, sub-second, so the
+# compose endpoint is synchronous: no worker, no queue.
+# ===========================================================================
+_IMAGES_SRC_PREFIX = os.getenv("IMAGES_PREFIX", "ugc-assets/images/")
+_IMAGES_OUT_PREFIX = "ugc-assets/exported/images/"
+_IMAGE_TEMPLATE_DIR = _REPO_ROOT / "image_templates"
+_IMAGE_EDITABLE = {
+    "place_name", "city_slug", "cityid", "category", "subcategory",
+    "notes", "status", "rights_status", "quality_score",
+}
+_IMAGE_OPTION_FIELDS = ("city_slug", "subcategory", "category", "orientation",
+                        "status", "rights_status")
+
+
+def _download_pil(key):
+    """Fetch an S3 object into a Pillow image (photos are small)."""
+    from PIL import Image
+    buf = io.BytesIO(b"".join(_s3.iter_object(key)))
+    return Image.open(buf)
+
+
+@app.get("/admin/image-templates")
+def list_image_templates(_=Depends(require_secret)):
+    """Every image layout, with slot geometry so the UI can draw and fill it."""
+    out = []
+    for path in sorted(_IMAGE_TEMPLATE_DIR.glob("*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        out.append({
+            "template_id": data["template_id"],
+            "version": data.get("version", 1),
+            "description": data.get("description", ""),
+            "canvas": data.get("canvas", {}),
+            "image_slots": data.get("image_slots", []),
+            "text_slots": data.get("text_slots", []),
+        })
+    return {"templates": out}
+
+
+@app.get("/admin/image-library")
+def list_image_library(db=Depends(get_db), _=Depends(require_secret)):
+    rows = _rows_as_dicts(
+        db, "SELECT * FROM public.image_library_assets ORDER BY s3_key")
+    out = []
+    for row in rows:
+        row["created_at"] = str(row.get("created_at") or "")
+        row["updated_at"] = str(row.get("updated_at") or "")
+        try:
+            row["preview_url"] = _s3.presign(row["s3_key"])
+        except Exception:
+            row["preview_url"] = None
+        out.append(row)
+    return {"assets": out}
+
+
+@app.get("/admin/image-library/options")
+def image_library_options(field: str = Query(...), db=Depends(get_db),
+                          _=Depends(require_secret)):
+    if field not in _IMAGE_OPTION_FIELDS:
+        raise HTTPException(status_code=400, detail="invalid field")
+    column = _quote_ident(field)
+    rows = db.execute_query(
+        f"SELECT DISTINCT {column} AS v FROM public.image_library_assets "
+        f"WHERE {column} IS NOT NULL AND {column}::text <> '' ORDER BY 1")
+    return {"values": [r[0] for r in (rows or [])]}
+
+
+@app.post("/admin/image-library/sync")
+def sync_image_library(db=Depends(get_db), _=Depends(require_secret)):
+    """List ugc-assets/images/ and upsert into the photo library (probes size)."""
+    summary = imgsync.sync_images(db, _s3, _BUCKET, _IMAGES_SRC_PREFIX)
+    db.execute_query(
+        "UPDATE public.image_library_assets "
+        "SET asset_id = 'IMG-' || lpad(id::text, 5, '0') WHERE asset_id IS NULL")
+    return {"ok": True, **summary}
+
+
+class ImageLibraryUpdate(BaseModel):
+    values: Dict[str, Any] = {}
+
+
+@app.put("/admin/image-library/{asset_pk}")
+def update_image_library(asset_pk: int, body: ImageLibraryUpdate,
+                         db=Depends(get_db), _=Depends(require_secret)):
+    values = {k: v for k, v in body.values.items() if k in _IMAGE_EDITABLE}
+    if not values:
+        return {"ok": True}
+    if "quality_score" in values:
+        raw = _to_number(values["quality_score"], int)
+        values["quality_score"] = None if raw is None else max(1, min(5, raw))
+    assignments = ", ".join(f"{_quote_ident(k)} = %({k})s" for k in values)
+    result = db.execute_query(
+        f"UPDATE public.image_library_assets SET {assignments}, updated_at = now() "
+        f"WHERE id = %(id)s", {**values, "id": asset_pk})
+    if result is False:
+        raise HTTPException(status_code=409, detail="update rejected")
+    return {"ok": True}
+
+
+@app.delete("/admin/image-library/{asset_pk}")
+def delete_image_library(asset_pk: int, db=Depends(get_db),
+                         _=Depends(require_secret)):
+    """Removes the catalog row; the S3 object is untouched (no delete access)."""
+    result = db.execute_query(
+        "DELETE FROM public.image_library_assets WHERE id = %s", (asset_pk,))
+    if result is False:
+        raise HTTPException(status_code=409, detail="delete rejected")
+    return {"ok": True}
+
+
+class ImageComposeBody(BaseModel):
+    template_id: str
+    slots: Dict[str, int] = {}     # image slot name -> image_library_assets.id
+    texts: Dict[str, str] = {}     # text slot name -> literal text
+    cityid: Optional[str] = None
+    topic: Optional[str] = None
+
+
+@app.post("/admin/images/compose")
+def compose_image(body: ImageComposeBody, db=Depends(get_db),
+                  _=Depends(require_secret)):
+    """
+    Compose one still from a template + chosen photos + text, upload it to
+    ugc-assets/exported/images/, and record it. Synchronous — Pillow is fast.
+    """
+    try:
+        template = imgcomposer.load_image_template(body.template_id,
+                                                   _IMAGE_TEMPLATE_DIR)
+    except imgcomposer.ImageComposeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    images = {}
+    for name, pk in (body.slots or {}).items():
+        row = _rows_as_dicts(
+            db, "SELECT s3_key FROM public.image_library_assets WHERE id = %s",
+            (pk,))
+        if not row:
+            raise HTTPException(status_code=400,
+                                detail=f"no such photo {pk} for slot '{name}'")
+        try:
+            images[name] = _download_pil(row[0]["s3_key"])
+        except Exception as exc:
+            raise HTTPException(status_code=502,
+                                detail=f"could not fetch photo for '{name}': {exc}")
+
+    texts = {k: str(v) for k, v in (body.texts or {}).items()}
+    image_id = "IMG-" + uuid.uuid4().hex[:16]
+    out_key = f"{_IMAGES_OUT_PREFIX}{image_id}.jpg"
+
+    fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
+    os.close(fd)
+    try:
+        width, height = imgcomposer.render_to_file(template, images, texts, tmp_path)
+        meta = _exporter.put_file(tmp_path, out_key, "image/jpeg", overwrite=False)
+    except imgcomposer.ImageComposeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    recipe = {"template_id": body.template_id, "slots": body.slots or {},
+              "texts": texts, "cityid": body.cityid, "topic": body.topic}
+    db.execute_query("""
+        INSERT INTO public.image_renders
+          (image_id, template_id, state, cityid, topic, recipe, s3_key,
+           width, height, size_bytes, checksum_sha256)
+        VALUES (%(image_id)s, %(template_id)s, 'succeeded', %(cityid)s, %(topic)s,
+                %(recipe)s::jsonb, %(key)s, %(w)s, %(h)s, %(size)s, %(sum)s)
+    """, {"image_id": image_id, "template_id": body.template_id,
+          "cityid": body.cityid, "topic": body.topic,
+          "recipe": json.dumps(recipe), "key": out_key,
+          "w": width, "h": height, "size": meta["size_bytes"],
+          "sum": meta["checksum_sha256"]})
+
+    try:
+        url = _s3.presign(out_key)
+    except Exception:
+        url = None
+    return {"image_id": image_id, "s3_key": out_key, "url": url,
+            "width": width, "height": height, "size_bytes": meta["size_bytes"]}
+
+
+@app.get("/admin/images")
+def list_images(db=Depends(get_db), _=Depends(require_secret)):
+    rows = _rows_as_dicts(db, """
+        SELECT id, image_id, template_id, state, cityid, topic, s3_key,
+               width, height, size_bytes, created_at
+        FROM public.image_renders ORDER BY created_at DESC LIMIT 200
+    """)
+    for row in rows:
+        row["created_at"] = str(row.get("created_at") or "")
+        try:
+            row["url"] = _s3.presign(row["s3_key"]) if row.get("s3_key") else None
+        except Exception:
+            row["url"] = None
+    return {"images": rows}
+
+
+@app.delete("/admin/images/{image_id}")
+def delete_image(image_id: str, db=Depends(get_db), _=Depends(require_secret)):
+    """Removes the record; the exported S3 object is untouched (no delete access)."""
+    result = db.execute_query(
+        "DELETE FROM public.image_renders WHERE image_id = %s", (image_id,))
+    if result is False:
+        raise HTTPException(status_code=409, detail="delete rejected")
+    return {"ok": True}

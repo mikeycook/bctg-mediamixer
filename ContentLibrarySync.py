@@ -122,7 +122,8 @@ def list_source_objects(s3, prefix, allow_exported=False, limit=None):
     raised, and reconciliation must refuse to run when it is False.
     """
     objects = []
-    counters = {"listed": 0, "markers": 0, "exported": 0, "non_media": 0}
+    counters = {"listed": 0, "markers": 0, "exported": 0, "non_media": 0,
+                "images": 0}
     complete = False
     try:
         for obj in s3.list_objects(prefix):
@@ -134,6 +135,11 @@ def list_source_objects(s3, prefix, allow_exported=False, limit=None):
                 continue
             if clpaths.is_exported(key) and not allow_exported:
                 counters["exported"] += 1
+                continue
+            # The still-image library lives under ugc-assets/images/ and is
+            # owned by ImageLibrarySync — the video sync must not ingest it.
+            if key.startswith("ugc-assets/images/"):
+                counters["images"] += 1
                 continue
             if not clpaths.is_media(key):
                 counters["non_media"] += 1

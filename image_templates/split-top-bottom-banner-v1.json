@@ -1,0 +1,18 @@
+{
+  "template_id": "split-top-bottom-banner-v1",
+  "version": 1,
+  "description": "Two photos stacked with a solid banner across the middle: photo on top, banner text band, photo on bottom. Portrait 1080x1920.",
+  "canvas": { "width": 1080, "height": 1920, "background": "#111111" },
+  "image_slots": [
+    { "name": "top", "x": 0, "y": 0, "w": 1080, "h": 800, "fit": "cover", "required": true },
+    { "name": "bottom", "x": 0, "y": 1120, "w": 1080, "h": 800, "fit": "cover", "required": true }
+  ],
+  "text_slots": [
+    { "name": "banner", "x": 0, "y": 800, "w": 1080, "h": 320,
+      "background": "#c62828", "background_opacity": 1.0,
+      "align": "center", "valign": "middle",
+      "font_size": 92, "color": "#ffffff", "bold": true,
+      "max_lines": 2, "padding": 40, "required": true,
+      "placeholder": "Banner text" }
+  ]
+}

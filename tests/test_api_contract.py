@@ -75,6 +75,15 @@ class TestPathsMatchTheAdminUi:
             "/admin/renders/{render_id}/alternatives",
             # Tags
             "/admin/tags",
+            # Images
+            "/admin/image-templates",
+            "/admin/image-library",
+            "/admin/image-library/options",
+            "/admin/image-library/sync",
+            "/admin/image-library/{asset_pk}",
+            "/admin/images",
+            "/admin/images/compose",
+            "/admin/images/{image_id}",
         }
 
     def test_there_is_no_way_to_edit_a_recipe(self):
