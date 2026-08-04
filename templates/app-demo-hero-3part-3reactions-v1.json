@@ -1,0 +1,128 @@
+{
+  "template_id": "app-demo-hero-3part-3reactions-v1",
+  "version": 1,
+  "description": "Opens on a hero shot, then the three-section app demo with a reaction cut between and after each: hero, app pt 1, reaction 1, app pt 2, reaction 2, app pt 3, reaction 3, outro. The hero is a b-roll clip of the same subject as the demo — scoped to the brief's topic by SubCategory via require_topic_match (a burgers brief opens on a burgers b-roll, not an app clip), with quality_score ranking the most striking clip to the front. The three app slots scope to the brief's feature (subtype) and are pinned in order by shot_type (Pt 1/2/3) and to the topic; reactions carry an arc via slot emotions; the cta slot is the outro (branded end-card when with_endcard is on). Set Topic (e.g. Burgers) and Feature (Features) on the brief.",
+  "canvas": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30
+  },
+  "slots": [
+    {
+      "role": "hero",
+      "asset_types": ["broll"],
+      "min_ms": 1500,
+      "preferred_ms": 3000,
+      "max_ms": 4000,
+      "required": true,
+      "prefer_topic_match": true,
+      "require_topic_match": true,
+      "notes": "Opening hero shot — a b-roll clip of the same subject as the demo, not an app clip. require_topic_match scopes it to the brief's topic by SubCategory (e.g. Burgers); quality_score ranks the best clip to the front. City-scoped like all b-roll."
+    },
+    {
+      "role": "app_part_1",
+      "asset_types": ["app"],
+      "min_ms": 1500,
+      "preferred_ms": 6000,
+      "max_ms": 12000,
+      "required": true,
+      "prefer_topic_match": true,
+      "require_topic_match": true,
+      "match_feature": true,
+      "require_shot_type": "Pt 1",
+      "notes": "Section 1 of the app demo. match_feature scopes it to the brief's feature (subtype); require_shot_type pins this slot to the clip tagged shot_type='Pt 1'."
+    },
+    {
+      "role": "reaction_1",
+      "asset_types": ["reaction"],
+      "min_ms": 1500,
+      "preferred_ms": 2500,
+      "max_ms": 4000,
+      "required": true,
+      "city_agnostic_ok": true,
+      "emotions": ["surprised", "shocked", "confused"],
+      "notes": "First reaction, between sections 1 and 2 — the 'wait, what?' intrigue beat. Emotions set on the slot (not the brief mood) so the reactions differ. Reactions carry no city, hence city_agnostic_ok."
+    },
+    {
+      "role": "app_part_2",
+      "asset_types": ["app"],
+      "min_ms": 1500,
+      "preferred_ms": 6000,
+      "max_ms": 12000,
+      "required": true,
+      "prefer_topic_match": true,
+      "require_topic_match": true,
+      "match_feature": true,
+      "require_shot_type": "Pt 2",
+      "notes": "Section 2 of the app demo. require_shot_type pins this slot to the clip tagged shot_type='Pt 2'."
+    },
+    {
+      "role": "reaction_2",
+      "asset_types": ["reaction"],
+      "min_ms": 1500,
+      "preferred_ms": 2500,
+      "max_ms": 4000,
+      "required": true,
+      "city_agnostic_ok": true,
+      "emotions": ["excited", "happy"],
+      "notes": "Second reaction, between sections 2 and 3 — the delight beat. Dedupe refuses to reuse an earlier reaction's clip or any sharing its checksum."
+    },
+    {
+      "role": "app_part_3",
+      "asset_types": ["app"],
+      "min_ms": 1500,
+      "preferred_ms": 6000,
+      "max_ms": 12000,
+      "required": true,
+      "prefer_topic_match": true,
+      "require_topic_match": true,
+      "match_feature": true,
+      "require_shot_type": "Pt 3",
+      "notes": "Section 3 of the app demo. require_shot_type pins this slot to the clip tagged shot_type='Pt 3'."
+    },
+    {
+      "role": "reaction_3",
+      "asset_types": ["reaction"],
+      "min_ms": 1500,
+      "preferred_ms": 2500,
+      "max_ms": 4000,
+      "required": true,
+      "city_agnostic_ok": true,
+      "emotions": ["excited", "happy"],
+      "notes": "Third reaction, after section 3 — the closing beat before the outro. A third distinct reaction clip; dedupe keeps it different from reactions 1 and 2."
+    },
+    {
+      "role": "cta",
+      "asset_types": ["app", "broll"],
+      "min_ms": 2000,
+      "preferred_ms": 2500,
+      "max_ms": 3000,
+      "required": true,
+      "prefer_topic_match": false,
+      "notes": "The outro. with_endcard on points this at the branded end-card (rotating across the CTA folder); off, it holds a topic clip behind the generated CTA line."
+    }
+  ],
+  "captions": [
+    {
+      "role": "hero",
+      "pattern": "{place_name}",
+      "style": "hook",
+      "lead_in_ms": 200,
+      "notes": "Names the place in the hero shot. Dropped if the clip has no place_name."
+    },
+    {
+      "role": "app_part_1",
+      "pattern": "{subtype}",
+      "style": "label",
+      "lead_in_ms": 200,
+      "notes": "Names the feature. Dropped if the opening app clip has no subtype."
+    },
+    {
+      "role": "cta",
+      "pattern": "Find it in Big City Travel Guide",
+      "style": "cta",
+      "lead_in_ms": 100,
+      "notes": "Fixed copy. Suppressed automatically when the branded end-card fills this slot."
+    }
+  ]
+}

@@ -534,6 +534,52 @@ class TestTopicStrictness:
         assert by_pk[part3["asset_pk"]]["id"] == 3
 
 
+class TestHeroTemplates:
+    """The hero variants open on a topic-scoped b-roll, then the app demo."""
+
+    def test_hero_templates_load_with_hero_first(self):
+        for name in ("app-demo-hero-3part-2reactions-v1",
+                     "app-demo-hero-3part-3reactions-v1"):
+            t = sel.load_template(name)
+            hero = t.slots[0]
+            assert hero.role == "hero"
+            assert hero.asset_types == ["broll"]
+            assert hero.require_topic_match is True
+            assert not hero.match_feature and not hero.require_shot_type
+            assert t.slots[-1].role == "cta"
+            assert all(s.min_ms <= s.preferred_ms <= s.max_ms for s in t.slots)
+
+    def test_hero_opens_on_the_topic_broll_not_an_off_topic_one(self):
+        rows = [
+            asset(1, "broll", subcategory="burgers", place_name="Joe's",
+                  duration_ms=3000, quality_score=1),
+            asset(2, "broll", subcategory="bagels", place_name="Ess-a",
+                  duration_ms=3000, quality_score=5),   # higher score, wrong topic
+            asset(10, "app", subtype="Features", shot_type="Pt 1",
+                  subcategory="burgers", duration_ms=6000),
+            asset(11, "app", subtype="Features", shot_type="Pt 2",
+                  subcategory="burgers", duration_ms=6000),
+            asset(12, "app", subtype="Features", shot_type="Pt 3",
+                  subcategory="burgers", duration_ms=6000),
+            reaction(20, ["surprised"]),
+            reaction(21, ["excited", "happy"]),
+            asset(30, "broll", subcategory="burgers", place_name="Lucy's",
+                  duration_ms=3000),                     # cta fodder
+        ]
+        brief = sel.VideoBrief(
+            cityid="CIT-00000000002", topic="burgers", feature="Features",
+            template_id="app-demo-hero-3part-2reactions-v1", seed="t")
+        recipe = sel.select(MoodAwareDb(rows), brief)
+        roles = [c["role"] for c in recipe["timeline"]]
+        assert roles == ["hero", "app_part_1", "reaction_1", "app_part_2",
+                         "reaction_2", "app_part_3", "cta"]
+        by_pk = {a["id"]: a for a in rows}
+        hero_clip = recipe["timeline"][0]
+        # The bagels b-roll outscores on quality but must be filtered out; the
+        # hero is a burgers clip.
+        assert by_pk[hero_clip["asset_pk"]]["subcategory"] == "burgers"
+
+
 def reaction(pk, emotions, **kw):
     kw.setdefault("duration_ms", 4000)
     return asset(pk, "reaction", city_agnostic=True, cityid=None, city_slug=None,
