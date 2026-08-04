@@ -1090,6 +1090,28 @@ def render_detail(render_id: str, db=Depends(get_db), _=Depends(require_secret))
     render["created_at"] = str(render.get("created_at") or "")
     render["completed_at"] = str(render.get("completed_at") or "")
 
+    # A fresh render stores caption_specs (patterns), not resolved text — the
+    # worker resolves them at render time and does not persist them back. Resolve
+    # them here with the same builder and overrides so the editor can pre-fill
+    # each clip's text box with what was actually burned in, instead of the
+    # operator re-typing it. Edited renders already carry literal captions
+    # (captions_frozen); leave those exactly as authored.
+    recipe = render.get("recipe")
+    if isinstance(recipe, str):
+        try:
+            recipe = json.loads(recipe)
+        except Exception:
+            recipe = None
+    if isinstance(recipe, dict):
+        if not recipe.get("captions") and not recipe.get("captions_frozen"):
+            try:
+                overrides = (recipe.get("brief") or {}).get("caption_overrides") or None
+                plan = captions.plan_for_recipe(db, recipe, overrides=overrides)
+                recipe["captions"] = [c.as_dict() for c in plan.captions]
+            except Exception:
+                pass
+        render["recipe"] = recipe
+
     artifacts = _rows_as_dicts(db, """
         SELECT role, s3_key, size_bytes, content_type, checksum_sha256
         FROM public.content_library_render_artifacts
