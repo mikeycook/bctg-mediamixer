@@ -1152,11 +1152,16 @@ _IMAGES_SRC_PREFIX = os.getenv("IMAGES_PREFIX", "ugc-assets/images/")
 _IMAGES_OUT_PREFIX = "ugc-assets/exported/images/"
 _IMAGE_TEMPLATE_DIR = _REPO_ROOT / "image_templates"
 _IMAGE_EDITABLE = {
-    "place_name", "city_slug", "cityid", "category", "subcategory",
+    "place_name", "city_slug", "cityid", "country", "category", "subcategory",
+    "type", "subtype", "neighborhood", "hook_compatibility", "tags",
     "notes", "status", "rights_status", "quality_score",
 }
-_IMAGE_OPTION_FIELDS = ("city_slug", "subcategory", "category", "orientation",
+_IMAGE_OPTION_FIELDS = ("city_slug", "country", "subcategory", "category",
+                        "type", "subtype", "neighborhood", "orientation",
                         "status", "rights_status")
+# TEXT[] columns the grid sends as a comma/quoted string, parsed like the
+# video library's hook field.
+_IMAGE_ARRAY_FIELDS = ("hook_compatibility", "tags")
 
 
 def _download_pil(key):
@@ -1234,6 +1239,9 @@ def update_image_library(asset_pk: int, body: ImageLibraryUpdate,
     if "quality_score" in values:
         raw = _to_number(values["quality_score"], int)
         values["quality_score"] = None if raw is None else max(1, min(5, raw))
+    for field in _IMAGE_ARRAY_FIELDS:
+        if field in values:
+            values[field] = _parse_hooks(values[field])
     assignments = ", ".join(f"{_quote_ident(k)} = %({k})s" for k in values)
     result = db.execute_query(
         f"UPDATE public.image_library_assets SET {assignments}, updated_at = now() "
