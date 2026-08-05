@@ -9,7 +9,13 @@ Objects that have disappeared from S3 are marked missing rather than deleted.
 """
 import io
 
-from PIL import Image
+try:
+    from PIL import Image
+except ImportError:  # pragma: no cover
+    # A missing Pillow must not break importing this module (and with it the
+    # whole API). Without it, sync still runs — photos just come in without
+    # probed dimensions until Pillow is installed.
+    Image = None
 
 import ImageLibraryPaths as paths
 
@@ -63,6 +69,8 @@ def _known_city_slugs(db):
 
 def _probe_dimensions(s3, key):
     """Read the object and return (width, height, orientation) or (None,)*3."""
+    if Image is None:
+        return None, None, None
     try:
         buf = io.BytesIO(b"".join(s3.iter_object(key)))
         with Image.open(buf) as im:

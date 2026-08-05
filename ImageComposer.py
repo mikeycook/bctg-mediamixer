@@ -15,7 +15,13 @@ import json
 import os
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+try:
+    from PIL import Image, ImageDraw, ImageFont
+except ImportError:  # pragma: no cover
+    # Importing this module must never take the service down. If Pillow is not
+    # installed, template listing and validation still work; only compose()
+    # fails, with a clear message, until `pip install Pillow` is run.
+    Image = ImageDraw = ImageFont = None
 
 import CaptionBuilder as _captions  # reuse the font locator
 
@@ -175,6 +181,8 @@ def compose(template, images, texts):
     texts:  {slot_name: str}        for text slots that were filled.
     Returns an RGB PIL.Image sized to the template canvas.
     """
+    if Image is None:
+        raise ImageComposeError("Pillow is not installed on this server")
     canvas_cfg = template["canvas"]
     W, H = canvas_cfg["width"], canvas_cfg["height"]
     bg = _rgb(canvas_cfg.get("background"), (0, 0, 0))
