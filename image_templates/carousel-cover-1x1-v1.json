@@ -1,0 +1,16 @@
+{
+  "template_id": "carousel-cover-1x1-v1",
+  "version": 1,
+  "description": "Carousel cover slide (Instagram square, 1080×1080): full-bleed photo with a large centered title band. Good for slide 1.",
+  "canvas": { "width": 1080, "height": 1080, "background": "#000000" },
+  "image_slots": [
+    { "name": "photo", "x": 0, "y": 0, "w": 1080, "h": 1080, "fit": "cover", "required": true }
+  ],
+  "text_slots": [
+    { "name": "title", "x": 0, "y": 360, "w": 1080, "h": 360,
+      "background": "#000000", "background_opacity": 0.5,
+      "align": "center", "valign": "middle",
+      "font_size": 84, "color": "#ffffff", "bold": true,
+      "max_lines": 3, "padding": 50, "required": true, "placeholder": "Title" }
+  ]
+}

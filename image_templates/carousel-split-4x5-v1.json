@@ -1,0 +1,17 @@
+{
+  "template_id": "carousel-split-4x5-v1",
+  "version": 1,
+  "description": "Carousel split slide (Instagram 4:5, 1080×1350): two photos with a solid banner across the middle.",
+  "canvas": { "width": 1080, "height": 1350, "background": "#111111" },
+  "image_slots": [
+    { "name": "top", "x": 0, "y": 0, "w": 1080, "h": 560, "fit": "cover", "required": true },
+    { "name": "bottom", "x": 0, "y": 790, "w": 1080, "h": 560, "fit": "cover", "required": true }
+  ],
+  "text_slots": [
+    { "name": "banner", "x": 0, "y": 560, "w": 1080, "h": 230,
+      "background": "#c62828", "background_opacity": 1.0,
+      "align": "center", "valign": "middle",
+      "font_size": 72, "color": "#ffffff", "bold": true,
+      "max_lines": 2, "padding": 30, "required": true, "placeholder": "Banner text" }
+  ]
+}

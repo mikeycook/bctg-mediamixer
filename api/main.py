@@ -1270,24 +1270,16 @@ class ImageComposeBody(BaseModel):
     topic: Optional[str] = None
 
 
-@app.post("/admin/images/compose")
-def compose_image(body: ImageComposeBody, db=Depends(get_db),
-                  _=Depends(require_secret)):
-    """
-    Compose one still from a template + chosen photos + text, upload it to
-    ugc-assets/exported/images/, and record it. Synchronous — Pillow is fast.
-    """
-    try:
-        template = imgcomposer.load_image_template(body.template_id,
-                                                   _IMAGE_TEMPLATE_DIR)
-    except imgcomposer.ImageComposeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-
+def _compose_one(db, template, slots, texts, cityid, topic,
+                 group_id=None, sequence=None):
+    """Fetch the chosen photos, compose the still, upload it, record it. Shared
+    by the single-image and carousel endpoints. Raises HTTPException on a bad
+    photo id, a fetch failure, or a compose error."""
+    template_id = template["template_id"]
     images = {}
-    for name, pk in (body.slots or {}).items():
+    for name, pk in (slots or {}).items():
         row = _rows_as_dicts(
-            db, "SELECT s3_key FROM public.image_library_assets WHERE id = %s",
-            (pk,))
+            db, "SELECT s3_key FROM public.image_library_assets WHERE id = %s", (pk,))
         if not row:
             raise HTTPException(status_code=400,
                                 detail=f"no such photo {pk} for slot '{name}'")
@@ -1297,7 +1289,7 @@ def compose_image(body: ImageComposeBody, db=Depends(get_db),
             raise HTTPException(status_code=502,
                                 detail=f"could not fetch photo for '{name}': {exc}")
 
-    texts = {k: str(v) for k, v in (body.texts or {}).items()}
+    texts = {k: str(v) for k, v in (texts or {}).items()}
     image_id = "IMG-" + uuid.uuid4().hex[:16]
     out_key = f"{_IMAGES_OUT_PREFIX}{image_id}.jpg"
 
@@ -1314,34 +1306,99 @@ def compose_image(body: ImageComposeBody, db=Depends(get_db),
         except OSError:
             pass
 
-    recipe = {"template_id": body.template_id, "slots": body.slots or {},
-              "texts": texts, "cityid": body.cityid, "topic": body.topic}
+    recipe = {"template_id": template_id, "slots": slots or {}, "texts": texts,
+              "cityid": cityid, "topic": topic,
+              "group_id": group_id, "sequence": sequence}
     db.execute_query("""
         INSERT INTO public.image_renders
           (image_id, template_id, state, cityid, topic, recipe, s3_key,
-           width, height, size_bytes, checksum_sha256)
+           width, height, size_bytes, checksum_sha256, group_id, sequence)
         VALUES (%(image_id)s, %(template_id)s, 'succeeded', %(cityid)s, %(topic)s,
-                %(recipe)s::jsonb, %(key)s, %(w)s, %(h)s, %(size)s, %(sum)s)
-    """, {"image_id": image_id, "template_id": body.template_id,
-          "cityid": body.cityid, "topic": body.topic,
+                %(recipe)s::jsonb, %(key)s, %(w)s, %(h)s, %(size)s, %(sum)s,
+                %(group_id)s, %(sequence)s)
+    """, {"image_id": image_id, "template_id": template_id,
+          "cityid": cityid, "topic": topic,
           "recipe": json.dumps(recipe), "key": out_key,
           "w": width, "h": height, "size": meta["size_bytes"],
-          "sum": meta["checksum_sha256"]})
+          "sum": meta["checksum_sha256"],
+          "group_id": group_id, "sequence": sequence})
 
     try:
         url = _s3.presign(out_key)
     except Exception:
         url = None
     return {"image_id": image_id, "s3_key": out_key, "url": url,
-            "width": width, "height": height, "size_bytes": meta["size_bytes"]}
+            "width": width, "height": height, "size_bytes": meta["size_bytes"],
+            "template_id": template_id, "group_id": group_id, "sequence": sequence}
+
+
+@app.post("/admin/images/compose")
+def compose_image(body: ImageComposeBody, db=Depends(get_db),
+                  _=Depends(require_secret)):
+    """
+    Compose one still from a template + chosen photos + text, upload it to
+    ugc-assets/exported/images/, and record it. Synchronous — Pillow is fast.
+    """
+    try:
+        template = imgcomposer.load_image_template(body.template_id,
+                                                   _IMAGE_TEMPLATE_DIR)
+    except imgcomposer.ImageComposeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return _compose_one(db, template, body.slots, body.texts,
+                        body.cityid, body.topic)
+
+
+class CarouselItem(BaseModel):
+    template_id: str
+    slots: Dict[str, int] = {}
+    texts: Dict[str, str] = {}
+
+
+class ImageCarouselBody(BaseModel):
+    items: List[CarouselItem]        # one per slide, in order
+    cityid: Optional[str] = None
+    topic: Optional[str] = None
+
+
+@app.post("/admin/images/compose-batch")
+def compose_batch(body: ImageCarouselBody, db=Depends(get_db),
+                  _=Depends(require_secret)):
+    """
+    Compose a carousel — several stills sharing a theme — in order. Every slide
+    must use a template of the same canvas size, so the set is uniform (a real
+    carousel requirement). The slides are recorded under one group_id with a
+    sequence, so they can be managed and downloaded together.
+    """
+    if not body.items:
+        raise HTTPException(status_code=400, detail="a carousel needs at least one slide")
+    templates = []
+    for item in body.items:
+        try:
+            templates.append(imgcomposer.load_image_template(
+                item.template_id, _IMAGE_TEMPLATE_DIR))
+        except imgcomposer.ImageComposeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    sizes = {(t["canvas"]["width"], t["canvas"]["height"]) for t in templates}
+    if len(sizes) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail=f"carousel slides must share one canvas size; got {sorted(sizes)}")
+
+    group_id = "CAR-" + uuid.uuid4().hex[:12]
+    results = []
+    for seq, (item, template) in enumerate(zip(body.items, templates)):
+        results.append(_compose_one(db, template, item.slots, item.texts,
+                                     body.cityid, body.topic, group_id, seq))
+    return {"group_id": group_id, "count": len(results), "images": results}
 
 
 @app.get("/admin/images")
 def list_images(db=Depends(get_db), _=Depends(require_secret)):
     rows = _rows_as_dicts(db, """
         SELECT id, image_id, template_id, state, cityid, topic, s3_key,
-               width, height, size_bytes, created_at
-        FROM public.image_renders ORDER BY created_at DESC LIMIT 200
+               width, height, size_bytes, group_id, sequence, created_at
+        FROM public.image_renders ORDER BY created_at DESC, group_id, sequence LIMIT 200
     """)
     for row in rows:
         row["created_at"] = str(row.get("created_at") or "")

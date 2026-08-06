@@ -11,13 +11,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import ImageComposer as ic  # noqa: E402
 
-ALL_TEMPLATES = [
-    "split-top-bottom-banner-v1",
-    "full-photo-banner-lower-v1",
-    "full-photo-banner-upper-v1",
-    "triptych-v1",
-    "quote-card-v1",
-]
+# Every template in the folder — so a newly added layout is covered automatically.
+ALL_TEMPLATES = sorted(p.stem for p in ic.TEMPLATE_DIR.glob("*.json"))
 
 
 def _solid(w=1200, h=1600, color=(80, 120, 200)):
@@ -26,10 +21,10 @@ def _solid(w=1200, h=1600, color=(80, 120, 200)):
 
 class TestTemplates:
     @pytest.mark.parametrize("tid", ALL_TEMPLATES)
-    def test_loads_and_is_portrait(self, tid):
+    def test_loads_with_a_valid_canvas(self, tid):
         t = ic.load_image_template(tid)
         assert t["canvas"]["width"] == 1080
-        assert t["canvas"]["height"] == 1920
+        assert t["canvas"]["height"] in (1080, 1350, 1920)
 
     def test_unknown_template_raises(self):
         with pytest.raises(ic.ImageComposeError):
@@ -50,7 +45,7 @@ class TestCompose:
         texts = {s["name"]: "Best Burgers in New York"
                  for s in t.get("text_slots", [])}
         out = ic.compose(t, images, texts)
-        assert out.size == (1080, 1920)
+        assert out.size == (t["canvas"]["width"], t["canvas"]["height"])
         assert out.mode == "RGB"
 
     def test_cover_crop_exactly_fills_slot(self):

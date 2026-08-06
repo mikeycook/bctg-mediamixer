@@ -81,3 +81,45 @@ def test_unknown_template_is_a_400(patched):
     with pytest.raises(main.HTTPException) as exc:
         main.compose_image(body, db=db, _=None)
     assert exc.value.status_code == 400
+
+
+def test_carousel_composes_a_group_in_sequence(patched):
+    db = FakeDb()
+    body = main.ImageCarouselBody(
+        items=[
+            main.CarouselItem(template_id="full-photo-banner-upper-v1",
+                              slots={"photo": 10}, texts={"banner": "Cover"}),
+            main.CarouselItem(template_id="full-photo-banner-lower-v1",
+                              slots={"photo": 11}, texts={"banner": "Slide 2"}),
+            main.CarouselItem(template_id="full-photo-banner-lower-v1",
+                              slots={"photo": 12}, texts={"banner": "Slide 3"}),
+        ],
+        cityid="CIT-00000000002", topic="pizza")
+    out = main.compose_batch(body, db=db, _=None)
+    assert out["count"] == 3
+    assert out["group_id"].startswith("CAR-")
+    seqs = [im["sequence"] for im in out["images"]]
+    assert seqs == [0, 1, 2]
+    assert all(im["group_id"] == out["group_id"] for im in out["images"])
+    # every slide is 9:16 here, so the sizes are uniform
+    assert {(im["width"], im["height"]) for im in out["images"]} == {(1080, 1920)}
+
+
+def test_carousel_rejects_mixed_canvas_sizes(patched):
+    db = FakeDb()
+    body = main.ImageCarouselBody(items=[
+        main.CarouselItem(template_id="full-photo-banner-lower-v1",
+                          slots={"photo": 10}, texts={"banner": "a"}),
+        main.CarouselItem(template_id="carousel-caption-1x1-v1",
+                          slots={"photo": 11}, texts={"caption": "b"}),
+    ])
+    with pytest.raises(main.HTTPException) as exc:
+        main.compose_batch(body, db=db, _=None)
+    assert exc.value.status_code == 400
+    assert "canvas size" in str(exc.value.detail)
+
+
+def test_empty_carousel_is_a_400(patched):
+    with pytest.raises(main.HTTPException) as exc:
+        main.compose_batch(main.ImageCarouselBody(items=[]), db=FakeDb(), _=None)
+    assert exc.value.status_code == 400

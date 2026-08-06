@@ -83,6 +83,7 @@ class TestPathsMatchTheAdminUi:
             "/admin/image-library/{asset_pk}",
             "/admin/images",
             "/admin/images/compose",
+            "/admin/images/compose-batch",
             "/admin/images/{image_id}",
         }
 

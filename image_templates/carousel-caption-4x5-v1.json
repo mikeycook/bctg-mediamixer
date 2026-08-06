@@ -1,0 +1,16 @@
+{
+  "template_id": "carousel-caption-4x5-v1",
+  "version": 1,
+  "description": "Carousel content slide (Instagram 4:5, 1080×1350): full-bleed photo with a translucent caption band across the lower third.",
+  "canvas": { "width": 1080, "height": 1350, "background": "#000000" },
+  "image_slots": [
+    { "name": "photo", "x": 0, "y": 0, "w": 1080, "h": 1350, "fit": "cover", "required": true }
+  ],
+  "text_slots": [
+    { "name": "caption", "x": 0, "y": 980, "w": 1080, "h": 370,
+      "background": "#000000", "background_opacity": 0.55,
+      "align": "center", "valign": "middle",
+      "font_size": 72, "color": "#ffffff", "bold": true,
+      "max_lines": 3, "padding": 50, "required": true, "placeholder": "Caption" }
+  ]
+}

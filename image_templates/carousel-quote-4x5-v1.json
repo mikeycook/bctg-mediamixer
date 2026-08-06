@@ -1,0 +1,17 @@
+{
+  "template_id": "carousel-quote-4x5-v1",
+  "version": 1,
+  "description": "Carousel text card (Instagram 4:5, 1080×1350): a large centered headline on a solid background with an optional attribution line. No photo.",
+  "canvas": { "width": 1080, "height": 1350, "background": "#101418" },
+  "image_slots": [],
+  "text_slots": [
+    { "name": "quote", "x": 110, "y": 330, "w": 860, "h": 690,
+      "align": "center", "valign": "middle",
+      "font_size": 84, "color": "#ffffff", "bold": true,
+      "max_lines": 6, "padding": 0, "required": true, "placeholder": "Headline or quote" },
+    { "name": "attribution", "x": 110, "y": 1120, "w": 860, "h": 110,
+      "align": "center", "valign": "middle",
+      "font_size": 42, "color": "#9aa0a6", "bold": false,
+      "max_lines": 1, "padding": 0, "required": false, "placeholder": "— attribution" }
+  ]
+}
